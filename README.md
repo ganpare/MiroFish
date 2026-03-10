@@ -20,7 +20,7 @@
 [![X](https://img.shields.io/badge/X-Follow-000000?style=flat-square&logo=x&logoColor=white)](https://x.com/mirofish_ai)
 [![Instagram](https://img.shields.io/badge/Instagram-Follow-E4405F?style=flat-square&logo=instagram&logoColor=white)](https://www.instagram.com/mirofish_ai/)
 
-[English](./README-EN.md) | [中文文档](./README.md)
+[English](./README-EN.md) | [中文文档](./README.md) | [日本語](./README-JP.md)
 
 </div>
 
@@ -152,8 +152,8 @@ npm run dev
 ```
 
 **服务地址：**
-- 前端：`http://localhost:3000`
-- 后端 API：`http://localhost:5001`
+- 前端：`http://localhost:60613`
+- 后端 API：`http://localhost:43037`
 
 **单独启动：**
 
@@ -172,7 +172,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-默认会读取根目录下的 `.env`，并映射端口 `3000（前端）/5001（后端）`
+默认会读取根目录下的 `.env`，并映射端口 `60613（前端）/43037（后端）`
 
 > 在 `docker-compose.yml` 中已通过注释提供加速镜像地址，可按需替换
 
