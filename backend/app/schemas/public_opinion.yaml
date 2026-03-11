@@ -1,0 +1,65 @@
+genre: public_opinion
+display_name: Public Opinion
+description: Social-media opinion simulation centered on people and organizations.
+keywords:
+  - public opinion
+  - social media
+  - controversy
+  - university
+  - media
+  - regulation
+required_entity_types:
+  - Person
+  - Organization
+entity_types:
+  - Student
+  - Professor
+  - Journalist
+  - Celebrity
+  - Executive
+  - Official
+  - University
+  - MediaOutlet
+  - Person
+  - Organization
+relation_types:
+  - WORKS_FOR
+  - STUDIES_AT
+  - AFFILIATED_WITH
+  - REPRESENTS
+  - REGULATES
+  - REPORTS_ON
+  - COMMENTS_ON
+  - RESPONDS_TO
+  - SUPPORTS
+  - OPPOSES
+agentizable_types:
+  - Student
+  - Professor
+  - Journalist
+  - Celebrity
+  - Executive
+  - Official
+  - University
+  - MediaOutlet
+  - Person
+  - Organization
+non_agentizable_types: []
+simulation_grammar:
+  Student: [post, comment, react, organize, question]
+  Professor: [comment, analyze, defend, criticize, clarify]
+  Journalist: [report, investigate, amplify, question, contextualize]
+  Celebrity: [post, endorse, distance, mobilize, react]
+  Executive: [announce, justify, negotiate, respond, deescalate]
+  Official: [announce, regulate, respond, defend, coordinate]
+  University: [announce, clarify, investigate, respond]
+  MediaOutlet: [report, amplify, frame, update]
+  Person: [post, react, support, oppose, share]
+  Organization: [announce, coordinate, support, oppose, respond]
+report_template:
+  sections:
+    - Main Actors
+    - Conflict Structure
+    - Narrative Shifts
+    - Propagation Paths
+    - Likely Outcomes

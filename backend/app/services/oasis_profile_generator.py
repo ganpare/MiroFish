@@ -167,14 +167,23 @@ class OasisProfileGenerator:
     
     # 个人类型实体（需要生成具体人设）
     INDIVIDUAL_ENTITY_TYPES = [
-        "student", "alumni", "professor", "person", "publicfigure", 
-        "expert", "faculty", "official", "journalist", "activist"
+        "student", "alumni", "professor", "person", "publicfigure",
+        "expert", "faculty", "official", "journalist", "activist",
+        "character", "philosopher"
     ]
     
     # 群体/机构类型实体（需要生成群体代表人设）
     GROUP_ENTITY_TYPES = [
-        "university", "governmentagency", "organization", "ngo", 
-        "mediaoutlet", "company", "institution", "group", "community"
+        "university", "governmentagency", "organization", "ngo",
+        "mediaoutlet", "company", "institution", "group", "community",
+        "faction", "state", "religion", "class", "dynasty", "school"
+    ]
+
+    # 抽象或概念性主体（不应被普通人格化）
+    ABSTRACT_ENTITY_TYPES = [
+        "concept", "claim", "method", "problem", "distinction",
+        "tradition", "theme", "goal", "secret", "relationshipstate",
+        "policy", "treaty", "technology", "economy"
     ]
     
     def __init__(
@@ -183,7 +192,8 @@ class OasisProfileGenerator:
         base_url: Optional[str] = None,
         model_name: Optional[str] = None,
         zep_api_key: Optional[str] = None,
-        graph_id: Optional[str] = None
+        graph_id: Optional[str] = None,
+        ontology: Optional[Dict[str, Any]] = None
     ):
         self.api_key = api_key or Config.LLM_API_KEY
         self.base_url = base_url or Config.LLM_BASE_URL
@@ -201,6 +211,7 @@ class OasisProfileGenerator:
         self.zep_api_key = zep_api_key or Config.ZEP_API_KEY
         self.zep_client = None
         self.graph_id = graph_id
+        self.ontology = ontology or {}
         
         if self.zep_api_key:
             try:
@@ -492,6 +503,10 @@ class OasisProfileGenerator:
     def _is_group_entity(self, entity_type: str) -> bool:
         """判断是否是群体/机构类型实体"""
         return entity_type.lower() in self.GROUP_ENTITY_TYPES
+
+    def _is_abstract_entity(self, entity_type: str) -> bool:
+        """判断是否是抽象或概念性主体"""
+        return entity_type.lower() in self.ABSTRACT_ENTITY_TYPES
     
     def _generate_profile_with_llm(
         self,
@@ -510,15 +525,23 @@ class OasisProfileGenerator:
         """
         
         is_individual = self._is_individual_entity(entity_type)
-        
+        is_abstract = self._is_abstract_entity(entity_type)
+
         if is_individual:
             prompt = self._build_individual_persona_prompt(
                 entity_name, entity_type, entity_summary, entity_attributes, context
             )
+            profile_mode = "individual"
+        elif is_abstract:
+            prompt = self._build_abstract_persona_prompt(
+                entity_name, entity_type, entity_summary, entity_attributes, context
+            )
+            profile_mode = "abstract"
         else:
             prompt = self._build_group_persona_prompt(
                 entity_name, entity_type, entity_summary, entity_attributes, context
             )
+            profile_mode = "group"
 
         # 尝试多次生成，直到成功或达到最大重试次数
         max_attempts = 3
@@ -529,7 +552,7 @@ class OasisProfileGenerator:
                 response = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": self._get_system_prompt(is_individual)},
+                        {"role": "system", "content": self._get_system_prompt(profile_mode)},
                         {"role": "user", "content": prompt}
                     ],
                     response_format={"type": "json_object"},
@@ -668,10 +691,14 @@ class OasisProfileGenerator:
             "persona": entity_summary or f"{entity_name}是一个{entity_type}。"
         }
     
-    def _get_system_prompt(self, is_individual: bool) -> str:
+    def _get_system_prompt(self, profile_mode: str) -> str:
         """获取系统提示词"""
-        base_prompt = "你是社交媒体用户画像生成专家。生成详细、真实的人设用于舆论模拟,最大程度还原已有现实情况。必须返回有效的JSON格式，所有字符串值不能包含未转义的换行符。使用中文。"
-        return base_prompt
+        base_prompt = "你是仿真主体画像生成专家。生成详细、真实的主体设定用于模拟。必须返回有效的JSON格式，所有字符串值不能包含未转义的换行符。使用中文。"
+        if profile_mode == "abstract":
+            return base_prompt + " 当前主体是概念或抽象结构，不要把它写成普通自然人，也不要写成闲聊型人格；应强调定义、功能、立场、作用域与历史位置。"
+        if profile_mode == "group":
+            return base_prompt + " 当前主体是群体、机构或制度性主体，应写成代表性账号或制度化行动者。"
+        return base_prompt + " 当前主体是具体个体，应写成个人化但不夸张的人设。"
     
     def _build_individual_persona_prompt(
         self,
@@ -769,6 +796,51 @@ class OasisProfileGenerator:
 - 使用中文（除了gender字段必须用英文"other"）
 - age必须是整数30，gender必须是字符串"other"
 - 机构账号发言要符合其身份定位"""
+
+    def _build_abstract_persona_prompt(
+        self,
+        entity_name: str,
+        entity_type: str,
+        entity_summary: str,
+        entity_attributes: Dict[str, Any],
+        context: str
+    ) -> str:
+        """构建概念/抽象主体的设定提示词"""
+
+        attrs_str = json.dumps(entity_attributes, ensure_ascii=False) if entity_attributes else "无"
+        context_str = context[:3000] if context else "无额外上下文"
+
+        return f"""为概念性或抽象主体生成详细的模拟设定，避免把它写成普通人类角色。
+
+实体名称: {entity_name}
+实体类型: {entity_type}
+实体摘要: {entity_summary}
+实体属性: {attrs_str}
+
+上下文信息:
+{context_str}
+
+请生成 JSON，包含以下字段:
+
+1. bio: 简洁说明这个主体是什么，以及它在模拟中的作用
+2. persona: 详细主体设定（纯文本），需包含:
+   - 核心定义或制度功能
+   - 作用范围与边界
+   - 与其他主体的主要张力或依赖关系
+   - 在当前文本/事件中的位置
+   - 典型行动方式或变化方式
+3. age: 固定填30
+4. gender: 固定填"other"
+5. mbti: 可用作风格标签，如INTJ/ISTJ，但不要人格化过度
+6. country: 如无明确国家，填"概念域"
+7. profession: 用该主体的功能描述，如"Concept", "Institution", "State"
+8. interested_topics: 与该主体高度相关的主题数组
+
+重要:
+- 不要把 Concept、Method、Claim、Policy 等写成普通人
+- persona 应强调结构、定义、功能、约束和演化
+- 所有字段值必须是字符串或数字，不允许 null
+- 使用中文（gender 固定为英文 other）"""
     
     def _generate_profile_rule_based(
         self,
@@ -805,6 +877,18 @@ class OasisProfileGenerator:
                 "profession": entity_attributes.get("occupation", "Expert"),
                 "interested_topics": ["Politics", "Economics", "Culture & Society"],
             }
+
+        elif entity_type_lower in ["character", "philosopher"]:
+            return {
+                "bio": f"{entity_type} central to the source text.",
+                "persona": f"{entity_name} is a key {entity_type.lower()} within the source material. Their behavior should stay grounded in the document, including motivations, constraints, conflicts, and memorable reactions already implied by the text.",
+                "age": random.randint(25, 60),
+                "gender": random.choice(["male", "female"]),
+                "mbti": random.choice(self.MBTI_TYPES),
+                "country": random.choice(self.COUNTRIES),
+                "profession": entity_type,
+                "interested_topics": ["Conflict", "Ideas", "Relationships"],
+            }
         
         elif entity_type_lower in ["mediaoutlet", "socialmediaplatform"]:
             return {
@@ -817,8 +901,20 @@ class OasisProfileGenerator:
                 "profession": "Media",
                 "interested_topics": ["General News", "Current Events", "Public Affairs"],
             }
+
+        elif entity_type_lower in self.ABSTRACT_ENTITY_TYPES:
+            return {
+                "bio": f"{entity_name} is a {entity_type} shaping the simulation logic.",
+                "persona": f"{entity_name} should be treated as an abstract actor rather than a natural person. Its profile is defined by scope, core function, dependencies, tensions, and the kinds of transformations it introduces inside the modeled world.",
+                "age": 30,
+                "gender": "other",
+                "mbti": "INTJ",
+                "country": "概念域",
+                "profession": entity_type,
+                "interested_topics": ["Definitions", "Tensions", "Structural Change"],
+            }
         
-        elif entity_type_lower in ["university", "governmentagency", "ngo", "organization"]:
+        elif entity_type_lower in ["university", "governmentagency", "ngo", "organization", "institution", "state", "faction", "religion", "class", "dynasty", "school"]:
             return {
                 "bio": f"Official account of {entity_name}.",
                 "persona": f"{entity_name} is an institutional entity that communicates official positions, announcements, and engages with stakeholders on relevant matters.",

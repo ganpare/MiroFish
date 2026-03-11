@@ -1,0 +1,52 @@
+genre: novel
+display_name: Novel
+description: Narrative simulation focused on desire, secrets, factions, and dramatic conflict.
+keywords:
+  - novel
+  - fiction
+  - character
+  - chapter
+  - plot
+  - secret
+entity_types:
+  - Character
+  - Faction
+  - Location
+  - Event
+  - Object
+  - Goal
+  - Secret
+  - RelationshipState
+  - Theme
+relation_types:
+  - KNOWS
+  - LOVES
+  - HATES
+  - FEARS
+  - SERVES
+  - BETRAYS
+  - SEEKS
+  - HIDES
+  - LOCATED_IN
+  - CAUSES
+agentizable_types:
+  - Character
+  - Faction
+non_agentizable_types:
+  - Location
+  - Event
+  - Object
+  - Goal
+  - Secret
+  - RelationshipState
+  - Theme
+simulation_grammar:
+  Character: [encounter, reveal, conceal, persuade, betray, cooperate, investigate, pursue, protect, attack, escape, sacrifice]
+  Faction: [recruit, compete, ally, scheme, protect, attack]
+report_template:
+  sections:
+    - Key Actors
+    - Desire Map
+    - Secret Structure
+    - Relationship Shifts
+    - Likely Plot Developments

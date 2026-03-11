@@ -1,0 +1,54 @@
+genre: philosophy
+display_name: Philosophy
+description: Concept-centered simulation focused on definitions, critiques, schools, and unresolved problems.
+keywords:
+  - philosophy
+  - concept
+  - argument
+  - critique
+  - metaphysics
+  - epistemology
+  - ethics
+entity_types:
+  - Concept
+  - Claim
+  - School
+  - Philosopher
+  - Text
+  - Method
+  - Problem
+  - Distinction
+  - Tradition
+relation_types:
+  - DEFINES
+  - DISTINGUISHES_FROM
+  - CRITIQUES
+  - SUPPORTS
+  - REFINES
+  - REJECTS
+  - DERIVES_FROM
+  - RESPONDS_TO
+  - INFLUENCES
+  - SYNTHESIZES
+agentizable_types:
+  - Concept
+  - School
+  - Philosopher
+non_agentizable_types:
+  - Claim
+  - Text
+  - Method
+  - Problem
+  - Distinction
+  - Tradition
+simulation_grammar:
+  Concept: [define, refine, differentiate, merge, split, negate]
+  School: [adopt, reinterpret, critique, synthesize, institutionalize]
+  Philosopher: [argue, distinguish, respond, reframe, defend]
+report_template:
+  sections:
+    - Core Concepts
+    - Axes of Tension
+    - Redefinitions
+    - Unresolved Problems
+    - Synthesis Candidates

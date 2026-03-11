@@ -11,7 +11,7 @@ from flask import request, jsonify
 from . import graph_bp
 from ..config import Config
 from ..services.ontology_generator import OntologyGenerator
-from ..services.graph_builder import GraphBuilderService
+from ..services.graph_backend import get_graph_builder
 from ..services.text_processor import TextProcessor
 from ..utils.file_parser import FileParser
 from ..utils.logger import get_logger
@@ -153,6 +153,10 @@ def generate_ontology():
         simulation_requirement = request.form.get('simulation_requirement', '')
         project_name = request.form.get('project_name', 'Unnamed Project')
         additional_context = request.form.get('additional_context', '')
+        preferred_genre = request.form.get('genre', '').strip() or None
+        overlay_genres_raw = request.form.get('schema_overlays', '').strip()
+        overlay_genres = [item.strip() for item in overlay_genres_raw.split(',') if item.strip()] if overlay_genres_raw else None
+        auto_detect_genre = request.form.get('auto_detect_genre', 'true').lower() != 'false'
         
         logger.debug(f"项目名称: {project_name}")
         logger.debug(f"模拟需求: {simulation_requirement[:100]}...")
@@ -217,7 +221,10 @@ def generate_ontology():
         ontology = generator.generate(
             document_texts=document_texts,
             simulation_requirement=simulation_requirement,
-            additional_context=additional_context if additional_context else None
+            additional_context=additional_context if additional_context else None,
+            preferred_genre=preferred_genre,
+            overlay_genres=overlay_genres,
+            auto_detect_genre=auto_detect_genre,
         )
         
         # 保存本体到项目
@@ -225,10 +232,7 @@ def generate_ontology():
         edge_count = len(ontology.get("edge_types", []))
         logger.info(f"本体生成完成: {entity_count} 个实体类型, {edge_count} 个关系类型")
         
-        project.ontology = {
-            "entity_types": ontology.get("entity_types", []),
-            "edge_types": ontology.get("edge_types", [])
-        }
+        project.ontology = ontology
         project.analysis_summary = ontology.get("analysis_summary", "")
         project.status = ProjectStatus.ONTOLOGY_GENERATED
         ProjectManager.save_project(project)
@@ -281,11 +285,9 @@ def build_graph():
     """
     try:
         logger.info("=== 开始构建图谱 ===")
-        
+
         # 检查配置
-        errors = []
-        if not Config.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY未配置")
+        errors = Config.validate()
         if errors:
             logger.error(f"配置错误: {errors}")
             return jsonify({
@@ -381,88 +383,97 @@ def build_graph():
                     message="初始化图谱构建服务..."
                 )
                 
-                # 创建图谱构建服务
-                builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
-                
-                # 分块
-                task_manager.update_task(
-                    task_id,
-                    message="文本分块中...",
-                    progress=5
-                )
-                chunks = TextProcessor.split_text(
-                    text, 
-                    chunk_size=chunk_size, 
-                    overlap=chunk_overlap
-                )
-                total_chunks = len(chunks)
-                
-                # 创建图谱
-                task_manager.update_task(
-                    task_id,
-                    message="创建Zep图谱...",
-                    progress=10
-                )
-                graph_id = builder.create_graph(name=graph_name)
-                
+                builder = get_graph_builder()
+
+                if Config.GRAPH_BACKEND == "local":
+                    def local_progress_callback(msg, ratio):
+                        progress = min(99, max(1, int(ratio * 95)))
+                        task_manager.update_task(task_id, message=msg, progress=progress)
+
+                    graph_id, graph_data = builder.build_graph_from_text(
+                        project_id=project_id,
+                        text=text,
+                        ontology=ontology,
+                        graph_name=graph_name,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_overlap,
+                        progress_callback=local_progress_callback,
+                    )
+                    total_chunks = len(TextProcessor.split_text(text, chunk_size=chunk_size, overlap=chunk_overlap))
+                else:
+                    task_manager.update_task(
+                        task_id,
+                        message="文本分块中...",
+                        progress=5
+                    )
+                    chunks = TextProcessor.split_text(
+                        text,
+                        chunk_size=chunk_size,
+                        overlap=chunk_overlap
+                    )
+                    total_chunks = len(chunks)
+
+                    task_manager.update_task(
+                        task_id,
+                        message="创建Zep图谱...",
+                        progress=10
+                    )
+                    graph_id = builder.create_graph(name=graph_name)
+
+                    task_manager.update_task(
+                        task_id,
+                        message="设置本体定义...",
+                        progress=15
+                    )
+                    builder.set_ontology(graph_id, ontology)
+
+                    def add_progress_callback(msg, progress_ratio):
+                        progress = 15 + int(progress_ratio * 40)
+                        task_manager.update_task(
+                            task_id,
+                            message=msg,
+                            progress=progress
+                        )
+
+                    task_manager.update_task(
+                        task_id,
+                        message=f"开始添加 {total_chunks} 个文本块...",
+                        progress=15
+                    )
+
+                    episode_uuids = builder.add_text_batches(
+                        graph_id,
+                        chunks,
+                        batch_size=3,
+                        progress_callback=add_progress_callback
+                    )
+
+                    task_manager.update_task(
+                        task_id,
+                        message="等待Zep处理数据...",
+                        progress=55
+                    )
+
+                    def wait_progress_callback(msg, progress_ratio):
+                        progress = 55 + int(progress_ratio * 35)
+                        task_manager.update_task(
+                            task_id,
+                            message=msg,
+                            progress=progress
+                        )
+
+                    builder._wait_for_episodes(episode_uuids, wait_progress_callback)
+
+                    task_manager.update_task(
+                        task_id,
+                        message="获取图谱数据...",
+                        progress=95
+                    )
+                    graph_data = builder.get_graph_data(graph_id)
+
                 # 更新项目的graph_id
                 project.graph_id = graph_id
                 ProjectManager.save_project(project)
-                
-                # 设置本体
-                task_manager.update_task(
-                    task_id,
-                    message="设置本体定义...",
-                    progress=15
-                )
-                builder.set_ontology(graph_id, ontology)
-                
-                # 添加文本（progress_callback 签名是 (msg, progress_ratio)）
-                def add_progress_callback(msg, progress_ratio):
-                    progress = 15 + int(progress_ratio * 40)  # 15% - 55%
-                    task_manager.update_task(
-                        task_id,
-                        message=msg,
-                        progress=progress
-                    )
-                
-                task_manager.update_task(
-                    task_id,
-                    message=f"开始添加 {total_chunks} 个文本块...",
-                    progress=15
-                )
-                
-                episode_uuids = builder.add_text_batches(
-                    graph_id, 
-                    chunks,
-                    batch_size=3,
-                    progress_callback=add_progress_callback
-                )
-                
-                # 等待Zep处理完成（查询每个episode的processed状态）
-                task_manager.update_task(
-                    task_id,
-                    message="等待Zep处理数据...",
-                    progress=55
-                )
-                
-                def wait_progress_callback(msg, progress_ratio):
-                    progress = 55 + int(progress_ratio * 35)  # 55% - 90%
-                    task_manager.update_task(
-                        task_id,
-                        message=msg,
-                        progress=progress
-                    )
-                
-                builder._wait_for_episodes(episode_uuids, wait_progress_callback)
-                
-                # 获取图谱数据
-                task_manager.update_task(
-                    task_id,
-                    message="获取图谱数据...",
-                    progress=95
-                )
-                graph_data = builder.get_graph_data(graph_id)
                 
                 # 更新项目状态
                 project.status = ProjectStatus.GRAPH_COMPLETED
@@ -567,13 +578,14 @@ def get_graph_data(graph_id: str):
     获取图谱数据（节点和边）
     """
     try:
-        if not Config.ZEP_API_KEY:
+        errors = Config.validate()
+        if errors:
             return jsonify({
                 "success": False,
-                "error": "ZEP_API_KEY未配置"
+                "error": "配置错误: " + "; ".join(errors)
             }), 500
-        
-        builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
+
+        builder = get_graph_builder()
         graph_data = builder.get_graph_data(graph_id)
         
         return jsonify({
@@ -592,16 +604,17 @@ def get_graph_data(graph_id: str):
 @graph_bp.route('/delete/<graph_id>', methods=['DELETE'])
 def delete_graph(graph_id: str):
     """
-    删除Zep图谱
+    删除图谱
     """
     try:
-        if not Config.ZEP_API_KEY:
+        errors = Config.validate()
+        if errors:
             return jsonify({
                 "success": False,
-                "error": "ZEP_API_KEY未配置"
+                "error": "配置错误: " + "; ".join(errors)
             }), 500
-        
-        builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
+
+        builder = get_graph_builder()
         builder.delete_graph(graph_id)
         
         return jsonify({

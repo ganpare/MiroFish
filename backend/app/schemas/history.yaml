@@ -1,0 +1,57 @@
+genre: history
+display_name: History
+description: Institution- and event-centered simulation focused on power, causality, and temporal change.
+keywords:
+  - history
+  - dynasty
+  - war
+  - empire
+  - policy
+  - treaty
+  - reform
+entity_types:
+  - Person
+  - Dynasty
+  - State
+  - Faction
+  - Institution
+  - Policy
+  - Event
+  - Battle
+  - Treaty
+  - Region
+relation_types:
+  - RULES
+  - ALLIED_WITH
+  - AT_WAR_WITH
+  - SUCCEEDS
+  - INFLUENCES
+  - ENACTS
+  - CAUSES
+  - TRIGGERS
+  - GOVERNS
+  - REBELS_AGAINST
+agentizable_types:
+  - Person
+  - State
+  - Faction
+  - Institution
+non_agentizable_types:
+  - Dynasty
+  - Policy
+  - Event
+  - Battle
+  - Treaty
+  - Region
+simulation_grammar:
+  Person: [negotiate, command, reform, suppress, ally]
+  State: [tax, invade, legislate, expand, stabilize, collapse]
+  Faction: [mobilize, rebel, conspire, ally, fragment]
+  Institution: [enforce, administer, adapt, constrain, legitimize]
+report_template:
+  sections:
+    - Main Actors
+    - Causal Chains
+    - Turning Points
+    - Institutional Change
+    - Counterfactual Risks

@@ -5,7 +5,7 @@
       <div class="nav-brand">MIROFISH</div>
       <div class="nav-links">
         <a href="https://github.com/666ghj/MiroFish" target="_blank" class="github-link">
-          访问我们的Github主页 <span class="arrow">↗</span>
+          GitHubページを見る <span class="arrow">↗</span>
         </a>
       </div>
     </nav>
@@ -15,21 +15,21 @@
       <section class="hero-section">
         <div class="hero-left">
           <div class="tag-row">
-            <span class="orange-tag">简洁通用的群体智能引擎</span>
-            <span class="version-text">/ v0.1-预览版</span>
+            <span class="orange-tag">シンプルで汎用的な群知能エンジン</span>
+            <span class="version-text">/ v0.1 プレビュー版</span>
           </div>
           
           <h1 class="main-title">
-            上传任意报告<br>
+            任意のレポートをアップロード<br>
             <span class="history-btn-text">履歴を見る</span>
           </h1>
           
           <div class="hero-desc">
             <p>
-              <h1>クイックスタート <span class="highlight">Quick Start</span></h1> 也能基于其中的现实种子，全自动生成与之对应的至多<span class="highlight-orange">百万级Agent</span>构成的平行世界。通过上帝视角注入变量，在复杂的群体交互中寻找动态环境下的<span class="highlight-code">“局部最优解”</span>
+              <h1>クイックスタート <span class="highlight">Quick Start</span></h1> 現実世界のシードをもとに、最大<span class="highlight-orange">数百万規模のAgent</span>で構成される並行世界を自動生成します。俯瞰視点から変数を注入し、複雑な群衆相互作用の中で動的環境における<span class="highlight-code">「局所最適解」</span>を探索できます。
             </p>
             <p class="slogan-text">
-              大規模言語モデル（LLM）とナレッジグラフを活用した自動環境構築およびゲーム機能推論プラットフォーム。複雑な状況分析においてデータ駆動型の意思決定を支援します。在百战后胜出<span class="blinking-cursor">_</span>
+              大規模言語モデル（LLM）とナレッジグラフを活用した自動環境構築・シミュレーション推論プラットフォームです。複雑な状況分析におけるデータ駆動の意思決定を支援します。多数の試行の先でより良い判断へ導きます<span class="blinking-cursor">_</span>
             </p>
           </div>
            
@@ -68,8 +68,8 @@
               <div class="metric-label">平均 $5/回</div>
             </div>
             <div class="metric-card">
-              <div class="metric-value">高可用性</div>
-              <div class="metric-label">最大数百万のAgentシミュレーション</div>
+              <div class="metric-value">高可用</div>
+              <div class="metric-label">最大数百万Agentのシミュレーション</div>
             </div>
           </div>
 
@@ -174,10 +174,10 @@
               </div>
               <div class="input-wrapper">
                 <textarea
-                  v-model="customRequirement"
+                  v-model="formData.simulationRequirement"
                 placeholder="例：AI技術の発展が今後5年間で教育業界の雇用市場に与える影響を評価する..."
               ></textarea>
-                <div class="model-badge">引擎: MiroFish-V1.0</div>
+              <div class="model-badge">エンジン: MiroFish-V1.0</div>
               </div>
             </div>
 
@@ -188,8 +188,8 @@
                 @click="startSimulation"
                 :disabled="!canSubmit || loading"
               >
-                <span v-if="!loading">启动引擎</span>
-                <span v-else>初始化中...</span>
+                <span v-if="!loading">エンジンを起動</span>
+                <span v-else>初期化中...</span>
                 <span class="badge">技術プレビュー版</span>
               </button>
             </div>

@@ -11,6 +11,7 @@
           <div class="step-status">
             <span v-if="currentPhase > 0" class="badge success">完了</span>
             <span v-else-if="currentPhase === 0" class="badge processing">生成中</span>
+            <span v-else-if="pendingSummary" class="badge pending">設定待ち</span>
             <span v-else class="badge pending">待機中</span>
           </div>
         </div>
@@ -20,6 +21,95 @@
           <p class="description">
             LLMがドキュメント内容とシミュレーション要件を分析して現実のシードを抽出し、適切なオントロジー構造を自動生成します
           </p>
+
+          <div class="schema-config-card">
+            <div class="schema-config-header">
+              <span class="schema-config-title">GENRE SCHEMA</span>
+              <span v-if="pendingSummary" class="schema-config-mode">EDITABLE</span>
+              <span v-else class="schema-config-mode locked">LOCKED</span>
+            </div>
+
+            <template v-if="pendingSummary">
+              <div class="schema-control-grid">
+                <label class="schema-field">
+                  <span class="schema-label">Primary Genre</span>
+                  <select
+                    :value="selectedGenre"
+                    class="schema-select"
+                    :disabled="isGeneratingOntology"
+                    @change="emit('update:genre', $event.target.value)"
+                  >
+                    <option v-for="option in genreOptions" :key="option.value" :value="option.value">
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </label>
+
+                <div class="schema-field">
+                  <span class="schema-label">Overlay Genres</span>
+                  <div class="overlay-list">
+                    <label
+                      v-for="option in overlayOptions"
+                      :key="option.value"
+                      class="overlay-item"
+                    >
+                      <input
+                        type="checkbox"
+                        :value="option.value"
+                        :checked="selectedOverlays.includes(option.value)"
+                        :disabled="isGeneratingOntology"
+                        @change="toggleOverlay(option.value, $event.target.checked)"
+                      />
+                      <span>{{ option.label }}</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="draft-summary">
+                <div class="draft-summary-row">
+                  <span class="draft-summary-label">Files</span>
+                  <span class="draft-summary-value">{{ pendingSummary.fileCount }} 件</span>
+                </div>
+                <div class="draft-summary-row">
+                  <span class="draft-summary-label">Prompt</span>
+                  <span class="draft-summary-value">{{ requirementPreview }}</span>
+                </div>
+              </div>
+
+              <button
+                class="schema-generate-btn"
+                :disabled="isGeneratingOntology"
+                @click="emit('generate-ontology')"
+              >
+                <span v-if="isGeneratingOntology" class="spinner-sm"></span>
+                {{ isGeneratingOntology ? 'オントロジー生成中...' : 'この schema で生成を開始' }}
+              </button>
+            </template>
+
+            <template v-else-if="projectData?.ontology">
+              <div class="schema-chip-row">
+                <span class="schema-chip primary">{{ resolvedGenreLabel }}</span>
+                <span
+                  v-for="overlay in resolvedOverlays"
+                  :key="overlay"
+                  class="schema-chip"
+                >
+                  + {{ formatGenreLabel(overlay) }}
+                </span>
+              </div>
+              <div class="schema-meta-grid">
+                <div class="schema-meta-item">
+                  <span class="schema-label">Agentizable</span>
+                  <span class="schema-value">{{ projectData.ontology.agentizable_types?.join(', ') || '-' }}</span>
+                </div>
+                <div class="schema-meta-item">
+                  <span class="schema-label">Report Sections</span>
+                  <span class="schema-value">{{ projectData.ontology.report_template?.sections?.join(' / ') || '-' }}</span>
+                </div>
+              </div>
+            </template>
+          </div>
 
           <!-- Loading / Progress -->
           <div v-if="currentPhase === 0 && ontologyProgress" class="progress-section">
@@ -199,14 +289,32 @@ const props = defineProps({
   ontologyProgress: Object,
   buildProgress: Object,
   graphData: Object,
+  pendingSummary: { type: Object, default: null },
+  schemaSelection: {
+    type: Object,
+    default: () => ({ genre: 'auto', overlays: [] })
+  },
+  isGeneratingOntology: { type: Boolean, default: false },
   systemLogs: { type: Array, default: () => [] }
 })
 
-defineEmits(['next-step'])
+const emit = defineEmits(['next-step', 'update:genre', 'update:overlays', 'generate-ontology'])
 
 const selectedOntologyItem = ref(null)
 const logContent = ref(null)
 const creatingSimulation = ref(false)
+const genreOptions = [
+  { value: 'auto', label: '自動判定' },
+  { value: 'public_opinion', label: 'Public Opinion' },
+  { value: 'novel', label: 'Novel' },
+  { value: 'philosophy', label: 'Philosophy' },
+  { value: 'history', label: 'History' }
+]
+const overlayCatalog = [
+  { value: 'novel', label: 'Novel' },
+  { value: 'philosophy', label: 'Philosophy' },
+  { value: 'history', label: 'History' }
+]
 
 // 进入环境搭建 - 创建 simulation 并跳转
 const handleEnterEnvSetup = async () => {
@@ -253,6 +361,33 @@ const graphStats = computed(() => {
   const types = props.projectData?.ontology?.entity_types?.length || 0
   return { nodes, edges, types }
 })
+
+const selectedGenre = computed(() => props.schemaSelection?.genre || 'auto')
+const selectedOverlays = computed(() => props.schemaSelection?.overlays || [])
+const overlayOptions = computed(() => {
+  return overlayCatalog.filter(option => option.value !== selectedGenre.value)
+})
+const resolvedOverlays = computed(() => props.projectData?.ontology?.schema_overlays || [])
+const resolvedGenreLabel = computed(() => formatGenreLabel(props.projectData?.ontology?.genre))
+const requirementPreview = computed(() => {
+  const requirement = props.pendingSummary?.simulationRequirement || ''
+  if (!requirement) return '-'
+  return requirement.length > 96 ? requirement.slice(0, 96) + '...' : requirement
+})
+
+const formatGenreLabel = (genre) => {
+  return genreOptions.find(option => option.value === genre)?.label || genre || 'Unknown'
+}
+
+const toggleOverlay = (overlay, checked) => {
+  const next = new Set(selectedOverlays.value)
+  if (checked) {
+    next.add(overlay)
+  } else {
+    next.delete(overlay)
+  }
+  emit('update:overlays', Array.from(next))
+}
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '--:--:--'
@@ -360,6 +495,171 @@ watch(() => props.systemLogs.length, () => {
   color: #666;
   line-height: 1.5;
   margin-bottom: 16px;
+}
+
+.schema-config-card {
+  border: 1px solid #EAEAEA;
+  background: #FCFCFC;
+  border-radius: 6px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.schema-config-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.schema-config-title,
+.schema-config-mode {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.schema-config-title {
+  color: #555;
+}
+
+.schema-config-mode {
+  color: #FF5722;
+}
+
+.schema-config-mode.locked {
+  color: #999;
+}
+
+.schema-control-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.schema-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.schema-label {
+  font-size: 10px;
+  color: #888;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.schema-select {
+  border: 1px solid #DDD;
+  border-radius: 4px;
+  background: #FFF;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #222;
+}
+
+.overlay-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.overlay-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid #E0E0E0;
+  border-radius: 999px;
+  background: #FFF;
+  font-size: 11px;
+  color: #444;
+}
+
+.draft-summary {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.draft-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+}
+
+.draft-summary-label {
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.draft-summary-value {
+  color: #222;
+  text-align: right;
+}
+
+.schema-generate-btn {
+  width: 100%;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  border-radius: 4px;
+  padding: 12px 14px;
+  background: #111;
+  color: #FFF;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.schema-generate-btn:disabled {
+  background: #CCC;
+  cursor: not-allowed;
+}
+
+.schema-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.schema-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid #DDD;
+  background: #FFF;
+  font-size: 11px;
+  color: #555;
+}
+
+.schema-chip.primary {
+  background: #111;
+  border-color: #111;
+  color: #FFF;
+}
+
+.schema-meta-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.schema-meta-item {
+  display: grid;
+  gap: 4px;
+}
+
+.schema-value {
+  font-size: 12px;
+  color: #333;
+  line-height: 1.5;
 }
 
 /* Step 01 Tags */

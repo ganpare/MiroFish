@@ -1,6 +1,32 @@
 <template>
   <div class="env-setup-panel">
     <div class="scroll-container">
+      <div v-if="schemaGenre" class="schema-summary-card">
+        <div class="schema-summary-header">
+          <span class="schema-summary-title">GENRE SCHEMA</span>
+          <span class="schema-summary-state">LOCKED AFTER STEP1</span>
+        </div>
+        <div class="schema-chip-row">
+          <span class="schema-chip primary">{{ schemaGenreLabel }}</span>
+          <span v-for="overlay in schemaOverlays" :key="overlay" class="schema-chip">
+            + {{ formatGenreLabel(overlay) }}
+          </span>
+        </div>
+        <div class="schema-summary-grid">
+          <div class="schema-summary-item">
+            <span class="schema-summary-label">Agentizable Types</span>
+            <span class="schema-summary-value">{{ schemaAgentizable }}</span>
+          </div>
+          <div class="schema-summary-item">
+            <span class="schema-summary-label">Report Sections</span>
+            <span class="schema-summary-value">{{ schemaReportSections }}</span>
+          </div>
+        </div>
+        <p class="schema-summary-note">
+          genre schema は Step1 のオントロジー生成時に確定します。変更する場合は Step1 に戻って再生成してください。
+        </p>
+      </div>
+
       <!-- Step 01: 模拟实例 -->
       <div class="step-card" :class="{ 'active': phase === 0, 'completed': phase > 0 }">
         <div class="card-header">
@@ -267,59 +293,59 @@
             <!-- 平台配置 -->
             <div class="config-block">
               <div class="config-block-header">
-                <span class="config-block-title">推荐算法配置</span>
+              <span class="config-block-title">推奨アルゴリズム設定</span>
               </div>
               <div class="platforms-grid">
                 <div v-if="simulationConfig.twitter_config" class="platform-card">
                   <div class="platform-card-header">
-                    <span class="platform-name">平台 1：广场 / 信息流</span>
+                    <span class="platform-name">プラットフォーム 1: 広場 / フィード</span>
                   </div>
                   <div class="platform-params">
                     <div class="param-row">
-                      <span class="param-label">时效权重</span>
+                      <span class="param-label">鮮度の重み</span>
                       <span class="param-value">{{ simulationConfig.twitter_config.recency_weight }}</span>
                     </div>
                     <div class="param-row">
-                      <span class="param-label">热度权重</span>
+                      <span class="param-label">人気度の重み</span>
                       <span class="param-value">{{ simulationConfig.twitter_config.popularity_weight }}</span>
                     </div>
                     <div class="param-row">
-                      <span class="param-label">相关性权重</span>
+                      <span class="param-label">関連度の重み</span>
                       <span class="param-value">{{ simulationConfig.twitter_config.relevance_weight }}</span>
                     </div>
                     <div class="param-row">
-                      <span class="param-label">病毒阈值</span>
+                      <span class="param-label">拡散しきい値</span>
                       <span class="param-value">{{ simulationConfig.twitter_config.viral_threshold }}</span>
                     </div>
                     <div class="param-row">
-                      <span class="param-label">回音室强度</span>
+                      <span class="param-label">エコーチェンバー強度</span>
                       <span class="param-value">{{ simulationConfig.twitter_config.echo_chamber_strength }}</span>
                     </div>
                   </div>
                 </div>
                 <div v-if="simulationConfig.reddit_config" class="platform-card">
                   <div class="platform-card-header">
-                    <span class="platform-name">平台 2：话题 / 社区</span>
+                    <span class="platform-name">プラットフォーム 2: トピック / コミュニティ</span>
                   </div>
                   <div class="platform-params">
                     <div class="param-row">
-                      <span class="param-label">时效权重</span>
+                      <span class="param-label">鮮度の重み</span>
                       <span class="param-value">{{ simulationConfig.reddit_config.recency_weight }}</span>
                     </div>
                     <div class="param-row">
-                      <span class="param-label">热度权重</span>
+                      <span class="param-label">人気度の重み</span>
                       <span class="param-value">{{ simulationConfig.reddit_config.popularity_weight }}</span>
                     </div>
                     <div class="param-row">
-                      <span class="param-label">相关性权重</span>
+                      <span class="param-label">関連度の重み</span>
                       <span class="param-value">{{ simulationConfig.reddit_config.relevance_weight }}</span>
                     </div>
                     <div class="param-row">
-                      <span class="param-label">病毒阈值</span>
+                      <span class="param-label">拡散しきい値</span>
                       <span class="param-value">{{ simulationConfig.reddit_config.viral_threshold }}</span>
                     </div>
                     <div class="param-row">
-                      <span class="param-label">回音室强度</span>
+                      <span class="param-label">エコーチェンバー強度</span>
                       <span class="param-value">{{ simulationConfig.reddit_config.echo_chamber_strength }}</span>
                     </div>
                   </div>
@@ -330,7 +356,7 @@
             <!-- LLM 配置推理 -->
             <div v-if="simulationConfig.generation_reasoning" class="config-block">
               <div class="config-block-header">
-                <span class="config-block-title">LLM 配置推理</span>
+                <span class="config-block-title">LLM 設定の推論根拠</span>
               </div>
               <div class="reasoning-content">
                 <div 
@@ -351,19 +377,19 @@
         <div class="card-header">
           <div class="step-info">
             <span class="step-num">04</span>
-            <span class="step-title">初始激活编排</span>
+            <span class="step-title">初期アクティベーション編成</span>
           </div>
           <div class="step-status">
-            <span v-if="phase > 3" class="badge success">已完成</span>
-            <span v-else-if="phase === 3" class="badge processing">编排中</span>
-            <span v-else class="badge pending">等待</span>
+            <span v-if="phase > 3" class="badge success">完了</span>
+            <span v-else-if="phase === 3" class="badge processing">編成中</span>
+            <span v-else class="badge pending">待機中</span>
           </div>
         </div>
 
         <div class="card-content">
           <p class="api-note">POST /api/simulation/prepare</p>
           <p class="description">
-            基于叙事方向，自动生成初始激活事件与热点话题，引导模拟世界的初始状态
+            物語の方向性に基づいて、初期起動イベントと注目トピックを自動生成し、シミュレーション世界の初期状態を導きます
           </p>
 
           <div v-if="simulationConfig?.event_config" class="orchestration-content">
@@ -380,14 +406,14 @@
                     </linearGradient>
                   </defs>
                 </svg>
-                叙事引导方向
+                物語のガイドライン
               </span>
               <p class="narrative-text">{{ simulationConfig.event_config.narrative_direction }}</p>
             </div>
 
             <!-- 热点话题 -->
             <div class="topics-section">
-              <span class="box-label">初始热点话题</span>
+              <span class="box-label">初期ホットトピック</span>
               <div class="hot-topics-grid">
                 <span v-for="topic in simulationConfig.event_config.hot_topics" :key="topic" class="hot-topic-tag">
                   # {{ topic }}
@@ -397,7 +423,7 @@
 
             <!-- 初始帖子流 -->
             <div class="initial-posts-section">
-              <span class="box-label">初始激活序列 ({{ simulationConfig.event_config.initial_posts.length }})</span>
+              <span class="box-label">初期アクティベーション列 ({{ simulationConfig.event_config.initial_posts.length }})</span>
               <div class="posts-timeline">
                 <div v-for="(post, idx) in simulationConfig.event_config.initial_posts" :key="idx" class="timeline-item">
                   <div class="timeline-marker"></div>
@@ -423,29 +449,29 @@
         <div class="card-header">
           <div class="step-info">
             <span class="step-num">05</span>
-            <span class="step-title">准备完成</span>
+            <span class="step-title">準備完了</span>
           </div>
           <div class="step-status">
-            <span v-if="phase >= 4" class="badge processing">进行中</span>
-            <span v-else class="badge pending">等待</span>
+            <span v-if="phase >= 4" class="badge processing">進行中</span>
+            <span v-else class="badge pending">待機中</span>
           </div>
         </div>
 
         <div class="card-content">
           <p class="api-note">POST /api/simulation/start</p>
-          <p class="description">模拟环境已准备完成，可以开始运行模拟</p>
+          <p class="description">シミュレーション環境の準備が完了しました。実行を開始できます</p>
           
           <!-- 模拟轮数配置 - 只有在配置生成完成且轮数计算出来后才显示 -->
           <div v-if="simulationConfig && autoGeneratedRounds" class="rounds-config-section">
             <div class="rounds-header">
               <div class="header-left">
-                <span class="section-title">模拟轮数设定</span>
-                <span class="section-desc">MiroFish 自动规划推演现实 <span class="desc-highlight">{{ simulationConfig?.time_config?.total_simulation_hours || '-' }}</span> 小时，每轮代表现实 <span class="desc-highlight">{{ simulationConfig?.time_config?.minutes_per_round || '-' }}</span> 分钟时间流逝</span>
+            <span class="section-title">シミュレーションラウンド設定</span>
+            <span class="section-desc">MiroFish は現実の <span class="desc-highlight">{{ simulationConfig?.time_config?.total_simulation_hours || '-' }}</span> 時間分を自動計画し、1 ラウンドあたり現実時間 <span class="desc-highlight">{{ simulationConfig?.time_config?.minutes_per_round || '-' }}</span> 分として扱います</span>
               </div>
               <label class="switch-control">
                 <input type="checkbox" v-model="useCustomRounds">
                 <span class="switch-track"></span>
-                <span class="switch-label">自定义</span>
+                <span class="switch-label">カスタム</span>
               </label>
             </div>
             
@@ -454,10 +480,10 @@
                 <div class="slider-display">
                   <div class="slider-main-value">
                     <span class="val-num">{{ customMaxRounds }}</span>
-                    <span class="val-unit">轮</span>
+                    <span class="val-unit">ラウンド</span>
                   </div>
                   <div class="slider-meta-info">
-                    <span>若Agent规模为100：预计耗时约 {{ Math.round(customMaxRounds * 0.6) }} 分钟</span>
+                <span>Agent 規模が 100 の場合、推定所要時間は約 {{ Math.round(customMaxRounds * 0.6) }} 分です</span>
                   </div>
                 </div>
 
@@ -478,7 +504,7 @@
                       :class="{ active: customMaxRounds === 40 }"
                       @click="customMaxRounds = 40"
                       :style="{ position: 'absolute', left: `calc(${(40 - 10) / (autoGeneratedRounds - 10) * 100}% - 30px)` }"
-                    >40 (推荐)</span>
+                    >40 (推奨)</span>
                     <span>{{ autoGeneratedRounds }}</span>
                   </div>
                 </div>
@@ -488,7 +514,7 @@
                 <div class="auto-info-card">
                   <div class="auto-value">
                     <span class="val-num">{{ autoGeneratedRounds }}</span>
-                    <span class="val-unit">轮</span>
+                    <span class="val-unit">ラウンド</span>
                   </div>
                   <div class="auto-content">
                     <div class="auto-meta-row">
@@ -497,11 +523,11 @@
                           <circle cx="12" cy="12" r="10"></circle>
                           <polyline points="12 6 12 12 16 14"></polyline>
                         </svg>
-                        若Agent规模为100：预计耗时 {{ Math.round(autoGeneratedRounds * 0.6) }} 分钟
+                Agent 規模が 100 の場合、推定所要時間は {{ Math.round(autoGeneratedRounds * 0.6) }} 分です
                       </span>
                     </div>
                     <div class="auto-desc">
-                      <p class="highlight-tip" @click="useCustomRounds = true">若首次运行，强烈建议切换至‘自定义模式’减少模拟轮数，以便快速预览效果并降低报错风险 ➝</p>
+              <p class="highlight-tip" @click="useCustomRounds = true">初回実行では、ラウンド数を抑えた「カスタム」モードへ切り替えて、短時間で確認しつつエラー率を下げることを推奨します ➝</p>
                     </div>
                   </div>
                 </div>
@@ -514,14 +540,14 @@
               class="action-btn secondary"
               @click="$emit('go-back')"
             >
-              ← 返回图谱构建
+              ← グラフ構築へ戻る
             </button>
             <button 
               class="action-btn primary"
               :disabled="phase < 4"
               @click="handleStartSimulation"
             >
-              开始双世界并行模拟 ➝
+              2つの世界で並行シミュレーションを開始 ➝
             </button>
           </div>
         </div>
@@ -662,6 +688,13 @@ const expectedTotal = ref(null)
 const simulationConfig = ref(null)
 const selectedProfile = ref(null)
 const showProfilesDetail = ref(true)
+const genreOptions = [
+  { value: 'auto', label: '自動判定' },
+  { value: 'public_opinion', label: 'Public Opinion' },
+  { value: 'novel', label: 'Novel' },
+  { value: 'philosophy', label: 'Philosophy' },
+  { value: 'history', label: 'History' }
+]
 
 // 日志去重：记录上一次输出的关键信息
 let lastLoggedMessage = ''
@@ -732,9 +765,19 @@ const totalTopicsCount = computed(() => {
   }, 0)
 })
 
+const schemaGenre = computed(() => props.projectData?.ontology?.genre || '')
+const schemaOverlays = computed(() => props.projectData?.ontology?.schema_overlays || [])
+const schemaAgentizable = computed(() => props.projectData?.ontology?.agentizable_types?.join(', ') || '-')
+const schemaReportSections = computed(() => props.projectData?.ontology?.report_template?.sections?.join(' / ') || '-')
+const schemaGenreLabel = computed(() => formatGenreLabel(schemaGenre.value))
+
 // Methods
 const addLog = (msg) => {
   emit('add-log', msg)
+}
+
+const formatGenreLabel = (genre) => {
+  return genreOptions.find(option => option.value === genre)?.label || genre || 'Unknown'
 }
 
 // 处理开始模拟按钮点击
@@ -1096,6 +1139,90 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.schema-summary-card {
+  background: #FFF;
+  border: 1px solid #EAEAEA;
+  border-radius: 8px;
+  padding: 18px 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.schema-summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.schema-summary-title,
+.schema-summary-state {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.schema-summary-title {
+  color: #555;
+}
+
+.schema-summary-state {
+  color: #999;
+}
+
+.schema-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.schema-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid #DDD;
+  background: #FFF;
+  font-size: 11px;
+  color: #555;
+}
+
+.schema-chip.primary {
+  background: #111;
+  border-color: #111;
+  color: #FFF;
+}
+
+.schema-summary-grid {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.schema-summary-item {
+  display: grid;
+  gap: 4px;
+}
+
+.schema-summary-label {
+  font-size: 10px;
+  color: #888;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.schema-summary-value {
+  font-size: 12px;
+  color: #333;
+  line-height: 1.5;
+}
+
+.schema-summary-note {
+  margin: 0;
+  font-size: 12px;
+  color: #666;
+  line-height: 1.6;
 }
 
 /* Step Card */

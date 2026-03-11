@@ -247,6 +247,7 @@ class SimulationConfigGenerator:
         simulation_requirement: str,
         document_text: str,
         entities: List[EntityNode],
+        ontology: Optional[Dict[str, Any]] = None,
         enable_twitter: bool = True,
         enable_reddit: bool = True,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
@@ -286,7 +287,8 @@ class SimulationConfigGenerator:
         context = self._build_context(
             simulation_requirement=simulation_requirement,
             document_text=document_text,
-            entities=entities
+            entities=entities,
+            ontology=ontology,
         )
         
         reasoning_parts = []
@@ -381,7 +383,8 @@ class SimulationConfigGenerator:
         self,
         simulation_requirement: str,
         document_text: str,
-        entities: List[EntityNode]
+        entities: List[EntityNode],
+        ontology: Optional[Dict[str, Any]] = None,
     ) -> str:
         """构建LLM上下文，截断到最大长度"""
         
@@ -389,10 +392,20 @@ class SimulationConfigGenerator:
         entity_summary = self._summarize_entities(entities)
         
         # 构建上下文
-        context_parts = [
-            f"## 模拟需求\n{simulation_requirement}",
-            f"\n## 实体信息 ({len(entities)}个)\n{entity_summary}",
-        ]
+        context_parts = [f"## 模拟需求\n{simulation_requirement}"]
+
+        if ontology:
+            context_parts.append(
+                "\n## Ontology Schema\n"
+                f"- genre: {ontology.get('genre', 'unknown')}\n"
+                f"- overlays: {', '.join(ontology.get('schema_overlays', [])) or 'none'}\n"
+                f"- agentizable_types: {', '.join(ontology.get('agentizable_types', [])) or 'none'}\n"
+                f"- non_agentizable_types: {', '.join(ontology.get('non_agentizable_types', [])) or 'none'}\n"
+                f"- simulation_grammar: {json.dumps(ontology.get('simulation_grammar', {}), ensure_ascii=False)}\n"
+                f"- report_sections: {', '.join(ontology.get('report_template', {}).get('sections', [])) or 'none'}"
+            )
+
+        context_parts.append(f"\n## 实体信息 ({len(entities)}个)\n{entity_summary}")
         
         current_length = sum(len(p) for p in context_parts)
         remaining_length = self.MAX_CONTEXT_LENGTH - current_length - 500  # 留500字符余量

@@ -231,6 +231,7 @@ class SimulationManager:
         simulation_id: str,
         simulation_requirement: str,
         document_text: str,
+        ontology: Optional[Dict[str, Any]] = None,
         defined_entity_types: Optional[List[str]] = None,
         use_llm_for_profiles: bool = True,
         progress_callback: Optional[callable] = None,
@@ -312,7 +313,7 @@ class SimulationManager:
                 )
             
             # 传入graph_id以启用Zep检索功能，获取更丰富的上下文
-            generator = OasisProfileGenerator(graph_id=state.graph_id)
+            generator = OasisProfileGenerator(graph_id=state.graph_id, ontology=ontology)
             
             def profile_progress(current, total, msg):
                 if progress_callback:
@@ -406,6 +407,7 @@ class SimulationManager:
                 simulation_requirement=simulation_requirement,
                 document_text=document_text,
                 entities=filtered.entities,
+                ontology=ontology,
                 enable_twitter=state.enable_twitter,
                 enable_reddit=state.enable_reddit
             )

@@ -56,7 +56,13 @@
           :ontologyProgress="ontologyProgress"
           :buildProgress="buildProgress"
           :graphData="graphData"
+          :pendingSummary="pendingSummary"
+          :schemaSelection="schemaSelection"
+          :isGeneratingOntology="loading"
           :systemLogs="systemLogs"
+          @update:genre="handleGenreUpdate"
+          @update:overlays="handleOverlayUpdate"
+          @generate-ontology="handleGenerateOntology"
           @next-step="handleNextStep"
         />
         <!-- Step 2: 环境搭建 -->
@@ -104,6 +110,11 @@ const currentPhase = ref(-1) // -1: Upload, 0: Ontology, 1: Build, 2: Complete
 const ontologyProgress = ref(null)
 const buildProgress = ref(null)
 const systemLogs = ref([])
+const pendingSummary = ref(null)
+const schemaSelection = ref({
+  genre: 'auto',
+  overlays: []
+})
 
 // Polling timers
 let pollTimer = null
@@ -125,12 +136,14 @@ const rightPanelStyle = computed(() => {
 // --- Status Computed ---
 const statusClass = computed(() => {
   if (error.value) return 'error'
+  if (pendingSummary.value && currentPhase.value < 0) return 'idle'
   if (currentPhase.value >= 2) return 'completed'
   return 'processing'
 })
 
 const statusText = computed(() => {
   if (error.value) return 'エラー'
+  if (pendingSummary.value && currentPhase.value < 0) return 'Schema選択待ち'
   if (currentPhase.value >= 2) return '準備完了'
   if (currentPhase.value === 1) return 'グラフ構築中'
   if (currentPhase.value === 0) return 'オントロジー生成中'
@@ -180,36 +193,76 @@ const handleGoBack = () => {
 const initProject = async () => {
   addLog('プロジェクトビューが初期化されました。')
   if (currentProjectId.value === 'new') {
-    await handleNewProject()
+    initPendingProject()
   } else {
     await loadProject()
   }
 }
 
-const handleNewProject = async () => {
+const initPendingProject = () => {
   const pending = getPendingUpload()
   if (!pending.isPending || pending.files.length === 0) {
     error.value = '保留中のファイルが見つかりません。'
     addLog('エラー: 新しいプロジェクト用の保留中のファイルが見つかりません。')
     return
   }
-  
+  pendingSummary.value = {
+    fileCount: pending.files.length,
+    fileNames: pending.files.map(file => file.name),
+    simulationRequirement: pending.simulationRequirement
+  }
+  currentPhase.value = -1
+  ontologyProgress.value = null
+  addLog('Step1 で genre schema を選択してからオントロジー生成を開始できます。')
+}
+
+const handleGenreUpdate = (genre) => {
+  const normalizedGenre = genre || 'auto'
+  schemaSelection.value.genre = normalizedGenre
+  schemaSelection.value.overlays = schemaSelection.value.overlays.filter(item => item !== normalizedGenre)
+}
+
+const handleOverlayUpdate = (overlays) => {
+  schemaSelection.value.overlays = Array.isArray(overlays) ? overlays : []
+}
+
+const handleGenerateOntology = async () => {
+  const pending = getPendingUpload()
+  if (!pending.isPending || pending.files.length === 0) {
+    error.value = '保留中のファイルが見つかりません。'
+    addLog('エラー: オントロジー生成用の保留データが見つかりません。')
+    return
+  }
+
   try {
     loading.value = true
     currentPhase.value = 0
     ontologyProgress.value = { message: 'ドキュメントをアップロードして分析しています...' }
-    addLog('オントロジー生成を開始します: ファイルをアップロード中...')
-    
+
+    const primaryGenre = schemaSelection.value.genre
+    const overlayText = schemaSelection.value.overlays.length
+      ? ` / overlays=${schemaSelection.value.overlays.join(', ')}`
+      : ''
+    addLog(`オントロジー生成を開始します: genre=${primaryGenre}${overlayText}`)
+
     const formData = new FormData()
-    pending.files.forEach(f => formData.append('files', f))
+    pending.files.forEach(file => formData.append('files', file))
     formData.append('simulation_requirement', pending.simulationRequirement)
-    
+    formData.append('auto_detect_genre', primaryGenre === 'auto' ? 'true' : 'false')
+    if (primaryGenre !== 'auto') {
+      formData.append('genre', primaryGenre)
+    }
+    if (schemaSelection.value.overlays.length > 0) {
+      formData.append('schema_overlays', schemaSelection.value.overlays.join(','))
+    }
+
     const res = await generateOntology(formData)
     if (res.success) {
       clearPendingUpload()
+      pendingSummary.value = null
       currentProjectId.value = res.data.project_id
       projectData.value = res.data
-      
+
       router.replace({ name: 'Process', params: { projectId: res.data.project_id } })
       ontologyProgress.value = null
       addLog(`プロジェクト ${res.data.project_id} のオントロジー生成に成功しました`)
@@ -220,7 +273,7 @@ const handleNewProject = async () => {
     }
   } catch (err) {
     error.value = err.message
-    addLog(`handleNewProjectの例外: ${err.message}`)
+    addLog(`handleGenerateOntologyの例外: ${err.message}`)
   } finally {
     loading.value = false
   }
