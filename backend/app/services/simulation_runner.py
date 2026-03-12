@@ -307,6 +307,41 @@ class SimulationRunner:
             json.dump(data, f, ensure_ascii=False, indent=2)
         
         cls._run_states[state.simulation_id] = state
+
+    @classmethod
+    def sync_simulation_state_file(
+        cls,
+        simulation_id: str,
+        *,
+        status: str,
+        current_round: Optional[int] = None,
+        error: Optional[str] = None,
+    ):
+        """Keep state.json aligned with run_state.json for externally visible status."""
+        sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
+        state_file = os.path.join(sim_dir, "state.json")
+
+        if not os.path.exists(state_file):
+            logger.debug(f"跳过同步 state.json（文件不存在）: {simulation_id}")
+            return
+
+        try:
+            with open(state_file, 'r', encoding='utf-8') as f:
+                state_data = json.load(f)
+
+            state_data["status"] = status
+            state_data["updated_at"] = datetime.now().isoformat()
+
+            if current_round is not None:
+                state_data["current_round"] = current_round
+
+            if error is not None:
+                state_data["error"] = error
+
+            with open(state_file, 'w', encoding='utf-8') as f:
+                json.dump(state_data, f, indent=2, ensure_ascii=False)
+        except Exception as exc:
+            logger.warning(f"同步 state.json 失败: {simulation_id}, error={exc}")
     
     @classmethod
     def start_simulation(
@@ -523,6 +558,12 @@ class SimulationRunner:
                 state.runner_status = RunnerStatus.COMPLETED
                 state.completed_at = datetime.now().isoformat()
                 logger.info(f"模拟完成: {simulation_id}")
+                cls.sync_simulation_state_file(
+                    simulation_id,
+                    status=RunnerStatus.COMPLETED.value,
+                    current_round=state.current_round,
+                    error=None,
+                )
             else:
                 state.runner_status = RunnerStatus.FAILED
                 # 从主日志文件读取错误信息
@@ -536,6 +577,12 @@ class SimulationRunner:
                     pass
                 state.error = f"进程退出码: {exit_code}, 错误: {error_info}"
                 logger.error(f"模拟失败: {simulation_id}, error={state.error}")
+                cls.sync_simulation_state_file(
+                    simulation_id,
+                    status=RunnerStatus.FAILED.value,
+                    current_round=state.current_round,
+                    error=state.error,
+                )
             
             state.twitter_running = False
             state.reddit_running = False
@@ -546,6 +593,12 @@ class SimulationRunner:
             state.runner_status = RunnerStatus.FAILED
             state.error = str(e)
             cls._save_run_state(state)
+            cls.sync_simulation_state_file(
+                simulation_id,
+                status=RunnerStatus.FAILED.value,
+                current_round=state.current_round,
+                error=state.error,
+            )
         
         finally:
             # 停止图谱记忆更新器
@@ -633,6 +686,12 @@ class SimulationRunner:
                                         state.runner_status = RunnerStatus.COMPLETED
                                         state.completed_at = datetime.now().isoformat()
                                         logger.info(f"所有平台模拟已完成: {state.simulation_id}")
+                                        cls.sync_simulation_state_file(
+                                            state.simulation_id,
+                                            status=RunnerStatus.COMPLETED.value,
+                                            current_round=state.current_round,
+                                            error=None,
+                                        )
                                 
                                 # 更新轮次信息（从 round_end 事件）
                                 elif event_type == "round_end":
@@ -803,6 +862,12 @@ class SimulationRunner:
         state.reddit_running = False
         state.completed_at = datetime.now().isoformat()
         cls._save_run_state(state)
+        cls.sync_simulation_state_file(
+            simulation_id,
+            status=RunnerStatus.STOPPED.value,
+            current_round=state.current_round,
+            error=state.error,
+        )
         
         # 停止图谱记忆更新器
         if cls._graph_memory_enabled.get(simulation_id, False):
@@ -1234,24 +1299,12 @@ class SimulationRunner:
                         state.completed_at = datetime.now().isoformat()
                         state.error = "服务器关闭，模拟被终止"
                         cls._save_run_state(state)
-                    
-                    # 同时更新 state.json，将状态设为 stopped
-                    try:
-                        sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
-                        state_file = os.path.join(sim_dir, "state.json")
-                        logger.info(f"尝试更新 state.json: {state_file}")
-                        if os.path.exists(state_file):
-                            with open(state_file, 'r', encoding='utf-8') as f:
-                                state_data = json.load(f)
-                            state_data['status'] = 'stopped'
-                            state_data['updated_at'] = datetime.now().isoformat()
-                            with open(state_file, 'w', encoding='utf-8') as f:
-                                json.dump(state_data, f, indent=2, ensure_ascii=False)
-                            logger.info(f"已更新 state.json 状态为 stopped: {simulation_id}")
-                        else:
-                            logger.warning(f"state.json 不存在: {state_file}")
-                    except Exception as state_err:
-                        logger.warning(f"更新 state.json 失败: {simulation_id}, error={state_err}")
+                        cls.sync_simulation_state_file(
+                            simulation_id,
+                            status=RunnerStatus.STOPPED.value,
+                            current_round=state.current_round,
+                            error=state.error,
+                        )
                         
             except Exception as e:
                 logger.error(f"清理进程失败: {simulation_id}, error={e}")

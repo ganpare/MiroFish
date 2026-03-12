@@ -5,6 +5,7 @@ LLM-based entity/relation extractor for the local Neo4j graph backend.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from ..config import Config
@@ -80,14 +81,129 @@ class LocalGraphExtractor:
             max_tokens=1536,
         )
 
+    @staticmethod
+    def _split_sentences(text: str) -> List[str]:
+        sentences = re.split(r"(?<=[。！？!?\.])\s+|\n+", text)
+        return [sentence.strip() for sentence in sentences if sentence and sentence.strip()]
+
+    def extract_heuristic(self, text: str, ontology: Dict[str, Any], reason: str = "heuristic") -> Dict[str, Any]:
+        entity_defs = (ontology or {}).get("entity_types", []) or []
+        relation_defs = (ontology or {}).get("edge_types", []) or []
+        sentences = self._split_sentences(text)
+
+        entities: List[Dict[str, Any]] = []
+        entity_keys = set()
+        entities_by_type: Dict[str, List[Dict[str, Any]]] = {}
+
+        for entity_def in entity_defs:
+            entity_type = str(entity_def.get("name", "")).strip()
+            if not entity_type:
+                continue
+
+            candidates = []
+            for candidate in entity_def.get("examples") or []:
+                value = str(candidate).strip()
+                if value:
+                    candidates.append(value)
+            type_name = entity_type.strip()
+            if type_name and type_name not in candidates:
+                candidates.append(type_name)
+
+            for candidate in candidates:
+                if candidate not in text:
+                    continue
+
+                summary = next((sentence for sentence in sentences if candidate in sentence), entity_def.get("description", ""))
+                key = (entity_type.lower(), candidate.lower())
+                if key in entity_keys:
+                    continue
+
+                entity = {
+                    "name": candidate,
+                    "type": entity_type,
+                    "summary": summary[:240],
+                    "attributes": {
+                        "extraction_mode": "heuristic",
+                    },
+                }
+                entities.append(entity)
+                entities_by_type.setdefault(entity_type, []).append(entity)
+                entity_keys.add(key)
+
+        relations: List[Dict[str, Any]] = []
+        relation_keys = set()
+        for relation_def in relation_defs:
+            relation_name = str(relation_def.get("name", "")).strip()
+            if not relation_name:
+                continue
+            for source_target in relation_def.get("source_targets", []) or []:
+                source_type = str(source_target.get("source", "")).strip()
+                target_type = str(source_target.get("target", "")).strip()
+                source_entities = entities_by_type.get(source_type) or []
+                target_entities = entities_by_type.get(target_type) or []
+                if not source_entities or not target_entities:
+                    continue
+
+                matched_sentence = None
+                matched_pair = None
+                for sentence in sentences:
+                    for source_entity in source_entities:
+                        if source_entity["name"] not in sentence:
+                            continue
+                        for target_entity in target_entities:
+                            if source_entity["name"] == target_entity["name"]:
+                                continue
+                            if target_entity["name"] in sentence:
+                                matched_sentence = sentence
+                                matched_pair = (source_entity, target_entity)
+                                break
+                        if matched_pair:
+                            break
+                    if matched_pair:
+                        break
+
+                if not matched_pair:
+                    continue
+
+                source_entity, target_entity = matched_pair
+                relation_key = (
+                    source_entity["name"].lower(),
+                    target_entity["name"].lower(),
+                    relation_name.lower(),
+                )
+                if relation_key in relation_keys:
+                    continue
+
+                relations.append(
+                    {
+                        "source": source_entity["name"],
+                        "source_type": source_type,
+                        "target": target_entity["name"],
+                        "target_type": target_type,
+                        "relation": relation_name,
+                        "fact": (matched_sentence or "")[:280],
+                        "attributes": {
+                            "extraction_mode": "heuristic",
+                        },
+                    }
+                )
+                relation_keys.add(relation_key)
+
+        return {
+            "entities": entities,
+            "relations": relations,
+            "_strategy": "heuristic",
+            "_reason": reason,
+        }
+
     def extract(self, text: str, ontology: Dict[str, Any]) -> Dict[str, Any]:
         entity_types = [item.get("name") for item in (ontology or {}).get("entity_types", []) if item.get("name")]
         edge_types = [item.get("name") for item in (ontology or {}).get("edge_types", []) if item.get("name")]
 
         system = (
-            "你是一个严格输出 JSON 的信息抽取器。"
-            "你的任务是从给定文本中抽取实体与实体间关系，输出必须是 JSON 对象。"
-            "不要输出任何解释或多余文本。"
+            "You are a strict JSON-only information extractor. "
+            "Extract entities and relations from the provided text. "
+            "Return exactly one JSON object and nothing else."
         )
         user = {
             "text": text,
@@ -119,10 +235,10 @@ class LocalGraphExtractor:
             result = self.llm.chat_json(
                 messages=[
                     {"role": "system", "content": system},
-                    {"role": "user", "content": json.dumps(user, ensure_ascii=False, indent=2)},
+                    {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
                 ],
-                temperature=0.2,
-                max_tokens=2048,
+                temperature=0.1,
+                max_tokens=1536,
             )
         except Exception as exc:
             if self._is_data_inspection_failed(exc):
@@ -131,10 +247,10 @@ class LocalGraphExtractor:
                     result = self._extract_safe(text=text, ontology=ontology)
                 except Exception as safe_exc:
                     logger.error(f"Safe-mode extract still failed: {safe_exc}")
-                    return {"entities": [], "relations": []}
+                    return self.extract_heuristic(text=text, ontology=ontology, reason="safe_mode_failed")
             else:
                 logger.error(f"LLM extract failed: {exc}")
-                raise
+                return self.extract_heuristic(text=text, ontology=ontology, reason="llm_failed")
 
         cleaned_entities: List[Dict[str, Any]] = []
         for entity in result.get("entities") or []:
@@ -177,4 +293,12 @@ class LocalGraphExtractor:
                 }
             )
 
-        return {"entities": cleaned_entities, "relations": cleaned_relations}
+        if not cleaned_entities and not cleaned_relations:
+            logger.warning("LLM extract returned no usable JSON payload; falling back to heuristic extraction.")
+            return self.extract_heuristic(text=text, ontology=ontology, reason="empty_llm_payload")
+
+        return {
+            "entities": cleaned_entities,
+            "relations": cleaned_relations,
+            "_strategy": "llm",
+        }

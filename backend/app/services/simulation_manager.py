@@ -14,9 +14,11 @@ from enum import Enum
 
 from ..config import Config
 from ..utils.logger import get_logger
-from .zep_entity_reader import ZepEntityReader, FilteredEntities
+from .entity_backend import get_entity_reader
+from .zep_entity_reader import FilteredEntities
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_config_generator import SimulationConfigGenerator, SimulationParameters
+from .simulation_runner import SimulationRunner, RunnerStatus
 
 logger = get_logger('mirofish.simulation')
 
@@ -152,11 +154,50 @@ class SimulationManager:
             json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
         
         self._simulations[state.simulation_id] = state
+
+    def _reconcile_run_status(self, state: SimulationState) -> bool:
+        """Reconcile persisted simulation state with the latest run_state.json when needed."""
+        run_state = SimulationRunner.get_run_state(state.simulation_id)
+        if not run_state:
+            return False
+
+        status_map = {
+            RunnerStatus.STARTING: SimulationStatus.RUNNING,
+            RunnerStatus.RUNNING: SimulationStatus.RUNNING,
+            RunnerStatus.PAUSED: SimulationStatus.PAUSED,
+            RunnerStatus.STOPPING: SimulationStatus.RUNNING,
+            RunnerStatus.STOPPED: SimulationStatus.STOPPED,
+            RunnerStatus.COMPLETED: SimulationStatus.COMPLETED,
+            RunnerStatus.FAILED: SimulationStatus.FAILED,
+        }
+
+        changed = False
+        mapped_status = status_map.get(run_state.runner_status)
+        if mapped_status and state.status != mapped_status:
+            state.status = mapped_status
+            changed = True
+
+        if state.current_round != run_state.current_round:
+            state.current_round = run_state.current_round
+            changed = True
+
+        if mapped_status == SimulationStatus.FAILED and state.error != run_state.error:
+            state.error = run_state.error
+            changed = True
+
+        if mapped_status in {SimulationStatus.COMPLETED, SimulationStatus.STOPPED} and state.error:
+            state.error = None
+            changed = True
+
+        return changed
     
     def _load_simulation_state(self, simulation_id: str) -> Optional[SimulationState]:
         """从文件加载模拟状态"""
         if simulation_id in self._simulations:
-            return self._simulations[simulation_id]
+            cached = self._simulations[simulation_id]
+            if self._reconcile_run_status(cached):
+                self._save_simulation_state(cached)
+            return cached
         
         sim_dir = self._get_simulation_dir(simulation_id)
         state_file = os.path.join(sim_dir, "state.json")
@@ -186,8 +227,11 @@ class SimulationManager:
             updated_at=data.get("updated_at", datetime.now().isoformat()),
             error=data.get("error"),
         )
-        
-        self._simulations[simulation_id] = state
+
+        if self._reconcile_run_status(state):
+            self._save_simulation_state(state)
+        else:
+            self._simulations[simulation_id] = state
         return state
     
     def create_simulation(
@@ -222,9 +266,50 @@ class SimulationManager:
         )
         
         self._save_simulation_state(state)
-        logger.info(f"创建模拟: {simulation_id}, project={project_id}, graph={graph_id}")
+        logger.info(f"Created simulation: {simulation_id}, project={project_id}, graph={graph_id}")
         
         return state
+
+    def reset_preparation(self, simulation_id: str) -> Dict[str, Any]:
+        """Reset generated preparation artifacts so a simulation can be prepared again."""
+        state = self._load_simulation_state(simulation_id)
+        if not state:
+            raise ValueError(f"模拟不存在: {simulation_id}")
+
+        sim_dir = self._get_simulation_dir(simulation_id)
+        removed_files: List[str] = []
+
+        for filename in (
+            "simulation_config.json",
+            "reddit_profiles.json",
+            "twitter_profiles.csv",
+        ):
+            file_path = os.path.join(sim_dir, filename)
+            if not os.path.exists(file_path):
+                continue
+            try:
+                os.remove(file_path)
+                removed_files.append(filename)
+            except Exception as exc:
+                logger.warning(f"Failed to remove preparation file: {file_path}, error={exc}")
+
+        state.status = SimulationStatus.CREATED
+        state.entities_count = 0
+        state.profiles_count = 0
+        state.entity_types = []
+        state.config_generated = False
+        state.config_reasoning = ""
+        state.current_round = 0
+        state.twitter_status = "not_started"
+        state.reddit_status = "not_started"
+        state.error = None
+        self._save_simulation_state(state)
+
+        logger.info(f"Reset simulation preparation state: {simulation_id}, removed_files={removed_files}")
+        return {
+            "simulation_id": simulation_id,
+            "removed_files": removed_files,
+        }
     
     def prepare_simulation(
         self,
@@ -271,12 +356,12 @@ class SimulationManager:
             
             # ========== 阶段1: 读取并过滤实体 ==========
             if progress_callback:
-                progress_callback("reading", 0, "正在连接Zep图谱...")
-            
-            reader = ZepEntityReader()
+                progress_callback("reading", 0, "グラフへ接続中...")
+
+            reader = get_entity_reader()
             
             if progress_callback:
-                progress_callback("reading", 30, "正在读取节点数据...")
+                progress_callback("reading", 30, "ノードデータを読み込み中...")
             
             filtered = reader.filter_defined_entities(
                 graph_id=state.graph_id,
@@ -290,14 +375,14 @@ class SimulationManager:
             if progress_callback:
                 progress_callback(
                     "reading", 100, 
-                    f"完成，共 {filtered.filtered_count} 个实体",
+                    f"読み込み完了: {filtered.filtered_count} 件のエンティティ",
                     current=filtered.filtered_count,
                     total=filtered.filtered_count
                 )
             
             if filtered.filtered_count == 0:
                 state.status = SimulationStatus.FAILED
-                state.error = "没有找到符合条件的实体，请检查图谱是否正确构建"
+                state.error = "条件に一致するエンティティが見つかりません。グラフ構築結果を確認してください"
                 self._save_simulation_state(state)
                 return state
             
@@ -307,13 +392,21 @@ class SimulationManager:
             if progress_callback:
                 progress_callback(
                     "generating_profiles", 0, 
-                    "开始生成...",
+                    "Agent profile を生成中...",
                     current=0,
                     total=total_entities
                 )
             
             # 传入graph_id以启用Zep检索功能，获取更丰富的上下文
-            generator = OasisProfileGenerator(graph_id=state.graph_id, ontology=ontology)
+            language_hint = "\n".join(
+                part for part in [simulation_requirement, document_text[:4000] if document_text else ""]
+                if part
+            )
+            generator = OasisProfileGenerator(
+                graph_id=state.graph_id,
+                ontology=ontology,
+                language_hint=language_hint,
+            )
             
             def profile_progress(current, total, msg):
                 if progress_callback:
@@ -353,7 +446,7 @@ class SimulationManager:
             if progress_callback:
                 progress_callback(
                     "generating_profiles", 95, 
-                    "保存Profile文件...",
+                    "Profile ファイルを保存中...",
                     current=total_entities,
                     total=total_entities
                 )
@@ -376,7 +469,7 @@ class SimulationManager:
             if progress_callback:
                 progress_callback(
                     "generating_profiles", 100, 
-                    f"完成，共 {len(profiles)} 个Profile",
+                    f"Profile 生成完了: {len(profiles)} 件",
                     current=len(profiles),
                     total=len(profiles)
                 )
@@ -385,7 +478,7 @@ class SimulationManager:
             if progress_callback:
                 progress_callback(
                     "generating_config", 0, 
-                    "正在分析模拟需求...",
+                    "シミュレーション要件を分析中...",
                     current=0,
                     total=3
                 )
@@ -395,7 +488,7 @@ class SimulationManager:
             if progress_callback:
                 progress_callback(
                     "generating_config", 30, 
-                    "正在调用LLM生成配置...",
+                    "LLM で設定を生成中...",
                     current=1,
                     total=3
                 )
@@ -415,7 +508,7 @@ class SimulationManager:
             if progress_callback:
                 progress_callback(
                     "generating_config", 70, 
-                    "正在保存配置文件...",
+                    "設定ファイルを保存中...",
                     current=2,
                     total=3
                 )
@@ -431,7 +524,7 @@ class SimulationManager:
             if progress_callback:
                 progress_callback(
                     "generating_config", 100, 
-                    "配置生成完成",
+                    "設定生成が完了しました",
                     current=3,
                     total=3
                 )
@@ -443,13 +536,13 @@ class SimulationManager:
             state.status = SimulationStatus.READY
             self._save_simulation_state(state)
             
-            logger.info(f"模拟准备完成: {simulation_id}, "
+            logger.info(f"Simulation preparation completed: {simulation_id}, "
                        f"entities={state.entities_count}, profiles={state.profiles_count}")
             
             return state
             
         except Exception as e:
-            logger.error(f"模拟准备失败: {simulation_id}, error={str(e)}")
+            logger.error(f"Simulation preparation failed: {simulation_id}, error={str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             state.status = SimulationStatus.FAILED

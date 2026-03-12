@@ -133,12 +133,18 @@ class OntologyGenerator:
             {"role": "user", "content": user_message}
         ]
         
-        # 调用LLM
-        result = self.llm_client.chat_json(
-            messages=messages,
-            temperature=0.3,
-            max_tokens=4096
-        )
+        try:
+            result = self.llm_client.chat_json(
+                messages=messages,
+                temperature=0.3,
+                max_tokens=4096
+            )
+        except Exception:
+            result = self._build_schema_fallback_ontology(
+                document_texts=document_texts,
+                simulation_requirement=simulation_requirement,
+                schema_context=schema_context,
+            )
         
         # 验证和后处理
         result = self._validate_and_process(result, schema_context)
@@ -420,6 +426,58 @@ class OntologyGenerator:
                 normalized_sections.append(text)
 
         return {"sections": normalized_sections}
+
+    def _build_schema_fallback_ontology(
+        self,
+        document_texts: List[str],
+        simulation_requirement: str,
+        schema_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Build a minimal ontology directly from the selected schema when JSON generation fails."""
+        entity_names = schema_context.get("entity_types", [])[: self.MAX_ENTITY_TYPES]
+        relation_names = schema_context.get("relation_types", [])[: self.MAX_EDGE_TYPES]
+        agentizable_types = [
+            item for item in schema_context.get("agentizable_types", [])
+            if item in entity_names
+        ]
+        non_agentizable_types = [
+            item for item in schema_context.get("non_agentizable_types", [])
+            if item in entity_names and item not in agentizable_types
+        ]
+        if not non_agentizable_types:
+            non_agentizable_types = [item for item in entity_names if item not in agentizable_types]
+
+        entity_types = [self._build_required_entity_definition(name) for name in entity_names]
+        edge_types = []
+        edge_source = agentizable_types[0] if agentizable_types else (entity_names[0] if entity_names else "Entity")
+        edge_target = entity_names[1] if len(entity_names) > 1 else edge_source
+        for relation_name in relation_names:
+            edge_types.append({
+                "name": relation_name,
+                "description": f"{relation_name.title().replace('_', ' ')} relationship in the selected schema.",
+                "source_targets": [{"source": edge_source, "target": edge_target}],
+                "attributes": [],
+            })
+
+        summary_source = " ".join(document_texts)[:300]
+        if len(summary_source) < 60:
+            summary_source = simulation_requirement[:300]
+
+        return {
+            "genre": schema_context["genre"],
+            "schema_overlays": schema_context.get("schema_overlays", []),
+            "entity_types": entity_types,
+            "edge_types": edge_types,
+            "agentizable_types": agentizable_types,
+            "non_agentizable_types": non_agentizable_types,
+            "simulation_grammar": schema_context.get("simulation_grammar", {}),
+            "report_template": schema_context.get("report_template", {}),
+            "analysis_summary": (
+                f"Fallback ontology generated from the {schema_context['genre']} schema. "
+                f"Simulation focus: {simulation_requirement[:160]} | "
+                f"Document excerpt: {summary_source[:160]}"
+            ),
+        }
 
     def _validate_and_process(self, result: Dict[str, Any], schema_context: Dict[str, Any]) -> Dict[str, Any]:
         """验证和后处理结果"""

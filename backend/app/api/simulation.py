@@ -416,6 +416,23 @@ def prepare_simulation():
         # 检查是否强制重新生成
         force_regenerate = data.get('force_regenerate', False)
         logger.info(f"开始处理 /prepare 请求: simulation_id={simulation_id}, force_regenerate={force_regenerate}")
+
+        if force_regenerate:
+            run_state = SimulationRunner.get_run_state(simulation_id)
+            if run_state and run_state.runner_status == RunnerStatus.RUNNING:
+                return jsonify({
+                    "success": False,
+                    "error": "模拟正在运行，请先停止后再重新生成准备环境"
+                }), 409
+
+            reset_info = manager.reset_preparation(simulation_id)
+            cleanup_info = SimulationRunner.cleanup_simulation_logs(simulation_id)
+            logger.info(
+                f"已重置模拟准备环境: simulation_id={simulation_id}, "
+                f"reset_info={reset_info}, cleanup_info={cleanup_info}"
+            )
+
+            state = manager.get_simulation(simulation_id)
         
         # 检查是否已经准备完成（避免重复生成）
         if not force_regenerate:
@@ -663,47 +680,19 @@ def get_prepare_status():
         
         task_id = data.get('task_id')
         simulation_id = data.get('simulation_id')
-        
-        # 如果提供了simulation_id，先检查是否已准备完成
-        if simulation_id:
-            is_prepared, prepare_info = _check_simulation_prepared(simulation_id)
-            if is_prepared:
-                return jsonify({
-                    "success": True,
-                    "data": {
-                        "simulation_id": simulation_id,
-                        "status": "ready",
-                        "progress": 100,
-                        "message": "已有完成的准备工作",
-                        "already_prepared": True,
-                        "prepare_info": prepare_info
-                    }
-                })
-        
-        # 如果没有task_id，返回错误
-        if not task_id:
-            if simulation_id:
-                # 有simulation_id但未准备完成
-                return jsonify({
-                    "success": True,
-                    "data": {
-                        "simulation_id": simulation_id,
-                        "status": "not_started",
-                        "progress": 0,
-                        "message": "尚未开始准备，请调用 /api/simulation/prepare 开始",
-                        "already_prepared": False
-                    }
-                })
-            return jsonify({
-                "success": False,
-                "error": "请提供 task_id 或 simulation_id"
-            }), 400
-        
+
         task_manager = TaskManager()
-        task = task_manager.get_task(task_id)
-        
-        if not task:
-            # 任务不存在，但如果有simulation_id，检查是否已准备完成
+
+        if task_id:
+            task = task_manager.get_task(task_id)
+            if task:
+                task_dict = task.to_dict()
+                task_dict["already_prepared"] = False
+                return jsonify({
+                    "success": True,
+                    "data": task_dict
+                })
+
             if simulation_id:
                 is_prepared, prepare_info = _check_simulation_prepared(simulation_id)
                 if is_prepared:
@@ -719,19 +708,42 @@ def get_prepare_status():
                             "prepare_info": prepare_info
                         }
                     })
-            
+
             return jsonify({
                 "success": False,
                 "error": f"任务不存在: {task_id}"
             }), 404
-        
-        task_dict = task.to_dict()
-        task_dict["already_prepared"] = False
-        
+
+        if simulation_id:
+            is_prepared, prepare_info = _check_simulation_prepared(simulation_id)
+            if is_prepared:
+                return jsonify({
+                    "success": True,
+                    "data": {
+                        "simulation_id": simulation_id,
+                        "status": "ready",
+                        "progress": 100,
+                        "message": "已有完成的准备工作",
+                        "already_prepared": True,
+                        "prepare_info": prepare_info
+                    }
+                })
+
+            return jsonify({
+                "success": True,
+                "data": {
+                    "simulation_id": simulation_id,
+                    "status": "not_started",
+                    "progress": 0,
+                    "message": "尚未开始准备，请调用 /api/simulation/prepare 开始",
+                    "already_prepared": False
+                }
+            })
+
         return jsonify({
-            "success": True,
-            "data": task_dict
-        })
+            "success": False,
+            "error": "请提供 task_id 或 simulation_id"
+        }), 400
         
     except Exception as e:
         logger.error(f"查询任务状态失败: {str(e)}")
@@ -1674,7 +1686,7 @@ def stop_simulation():
         manager = SimulationManager()
         state = manager.get_simulation(simulation_id)
         if state:
-            state.status = SimulationStatus.PAUSED
+            state.status = SimulationStatus.STOPPED
             manager._save_simulation_state(state)
         
         return jsonify({

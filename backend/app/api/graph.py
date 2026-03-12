@@ -147,7 +147,7 @@ def generate_ontology():
         }
     """
     try:
-        logger.info("=== 开始生成本体定义 ===")
+        logger.info("=== ontology 生成を開始します ===")
         
         # 获取参数
         simulation_requirement = request.form.get('simulation_requirement', '')
@@ -178,7 +178,7 @@ def generate_ontology():
         # 创建项目
         project = ProjectManager.create_project(name=project_name)
         project.simulation_requirement = simulation_requirement
-        logger.info(f"创建项目: {project.project_id}")
+        logger.info(f"プロジェクトを作成しました: {project.project_id}")
         
         # 保存文件并提取文本
         document_texts = []
@@ -213,10 +213,10 @@ def generate_ontology():
         # 保存提取的文本
         project.total_text_length = len(all_text)
         ProjectManager.save_extracted_text(project.project_id, all_text)
-        logger.info(f"文本提取完成，共 {len(all_text)} 字符")
+        logger.info(f"テキスト抽出が完了しました: {len(all_text)} 文字")
         
         # 生成本体
-        logger.info("调用 LLM 生成本体定义...")
+        logger.info("LLM で ontology を生成しています...")
         generator = OntologyGenerator()
         ontology = generator.generate(
             document_texts=document_texts,
@@ -230,13 +230,13 @@ def generate_ontology():
         # 保存本体到项目
         entity_count = len(ontology.get("entity_types", []))
         edge_count = len(ontology.get("edge_types", []))
-        logger.info(f"本体生成完成: {entity_count} 个实体类型, {edge_count} 个关系类型")
+        logger.info(f"ontology 生成が完了しました: entity_types={entity_count}, edge_types={edge_count}")
         
         project.ontology = ontology
         project.analysis_summary = ontology.get("analysis_summary", "")
         project.status = ProjectStatus.ONTOLOGY_GENERATED
         ProjectManager.save_project(project)
-        logger.info(f"=== 本体生成完成 === 项目ID: {project.project_id}")
+        logger.info(f"=== ontology 生成完了 === project_id={project.project_id}")
         
         return jsonify({
             "success": True,
@@ -284,7 +284,7 @@ def build_graph():
         }
     """
     try:
-        logger.info("=== 开始构建图谱 ===")
+        logger.info("=== グラフ構築を開始します ===")
 
         # 检查配置
         errors = Config.validate()
@@ -365,7 +365,7 @@ def build_graph():
         # 创建异步任务
         task_manager = TaskManager()
         task_id = task_manager.create_task(f"构建图谱: {graph_name}")
-        logger.info(f"创建图谱构建任务: task_id={task_id}, project_id={project_id}")
+        logger.info(f"グラフ構築タスクを作成しました: task_id={task_id}, project_id={project_id}")
         
         # 更新项目状态
         project.status = ProjectStatus.GRAPH_BUILDING
@@ -376,11 +376,11 @@ def build_graph():
         def build_task():
             build_logger = get_logger('mirofish.build')
             try:
-                build_logger.info(f"[{task_id}] 开始构建图谱...")
+                build_logger.info(f"[{task_id}] グラフ構築を開始します...")
                 task_manager.update_task(
                     task_id, 
                     status=TaskStatus.PROCESSING,
-                    message="初始化图谱构建服务..."
+                    message="グラフ構築サービスを初期化しています..."
                 )
                 
                 builder = get_graph_builder()
@@ -403,7 +403,7 @@ def build_graph():
                 else:
                     task_manager.update_task(
                         task_id,
-                        message="文本分块中...",
+                        message="テキストを分割しています...",
                         progress=5
                     )
                     chunks = TextProcessor.split_text(
@@ -415,14 +415,14 @@ def build_graph():
 
                     task_manager.update_task(
                         task_id,
-                        message="创建Zep图谱...",
+                        message="Zep グラフを作成しています...",
                         progress=10
                     )
                     graph_id = builder.create_graph(name=graph_name)
 
                     task_manager.update_task(
                         task_id,
-                        message="设置本体定义...",
+                        message="ontology を設定しています...",
                         progress=15
                     )
                     builder.set_ontology(graph_id, ontology)
@@ -437,7 +437,7 @@ def build_graph():
 
                     task_manager.update_task(
                         task_id,
-                        message=f"开始添加 {total_chunks} 个文本块...",
+                        message=f"{total_chunks} 個の chunk を追加しています...",
                         progress=15
                     )
 
@@ -450,7 +450,7 @@ def build_graph():
 
                     task_manager.update_task(
                         task_id,
-                        message="等待Zep处理数据...",
+                        message="Zep の処理完了を待っています...",
                         progress=55
                     )
 
@@ -466,7 +466,7 @@ def build_graph():
 
                     task_manager.update_task(
                         task_id,
-                        message="获取图谱数据...",
+                        message="グラフデータを取得しています...",
                         progress=95
                     )
                     graph_data = builder.get_graph_data(graph_id)
@@ -481,13 +481,13 @@ def build_graph():
                 
                 node_count = graph_data.get("node_count", 0)
                 edge_count = graph_data.get("edge_count", 0)
-                build_logger.info(f"[{task_id}] 图谱构建完成: graph_id={graph_id}, 节点={node_count}, 边={edge_count}")
+                build_logger.info(f"[{task_id}] グラフ構築が完了しました: graph_id={graph_id}, nodes={node_count}, edges={edge_count}")
                 
                 # 完成
                 task_manager.update_task(
                     task_id,
                     status=TaskStatus.COMPLETED,
-                    message="图谱构建完成",
+                    message="グラフ構築が完了しました",
                     progress=100,
                     result={
                         "project_id": project_id,
@@ -500,7 +500,7 @@ def build_graph():
                 
             except Exception as e:
                 # 更新项目状态为失败
-                build_logger.error(f"[{task_id}] 图谱构建失败: {str(e)}")
+                build_logger.error(f"[{task_id}] グラフ構築に失敗しました: {str(e)}")
                 build_logger.debug(traceback.format_exc())
                 
                 project.status = ProjectStatus.FAILED
@@ -510,7 +510,7 @@ def build_graph():
                 task_manager.update_task(
                     task_id,
                     status=TaskStatus.FAILED,
-                    message=f"构建失败: {str(e)}",
+                    message=f"構築失敗: {str(e)}",
                     error=traceback.format_exc()
                 )
         
@@ -523,7 +523,7 @@ def build_graph():
             "data": {
                 "project_id": project_id,
                 "task_id": task_id,
-                "message": "图谱构建任务已启动，请通过 /task/{task_id} 查询进度"
+                "message": "グラフ構築タスクを開始しました。/task/{task_id} で進捗を確認できます"
             }
         })
         

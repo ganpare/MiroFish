@@ -1,5 +1,5 @@
 """
-MiroFish Backend - Flask应用工厂
+MiroFish Backend - Flask application factory.
 """
 
 import os
@@ -17,7 +17,7 @@ from .utils.logger import setup_logger, get_logger
 
 
 def create_app(config_class=Config):
-    """Flask应用工厂函数"""
+    """Flask application factory."""
     app = Flask(__name__)
     app.config.from_object(config_class)
     
@@ -36,7 +36,7 @@ def create_app(config_class=Config):
     
     if should_log_startup:
         logger.info("=" * 50)
-        logger.info("MiroFish Backend 启动中...")
+        logger.info("MiroFish Backend を起動しています...")
         logger.info("=" * 50)
     
     # 启用CORS
@@ -46,20 +46,20 @@ def create_app(config_class=Config):
     from .services.simulation_runner import SimulationRunner
     SimulationRunner.register_cleanup()
     if should_log_startup:
-        logger.info("已注册模拟进程清理函数")
+        logger.info("シミュレーションの cleanup handler を登録しました")
     
     # 请求日志中间件
     @app.before_request
     def log_request():
         logger = get_logger('mirofish.request')
-        logger.debug(f"请求: {request.method} {request.path}")
+        logger.debug(f"リクエスト: {request.method} {request.path}")
         if request.content_type and 'json' in request.content_type:
-            logger.debug(f"请求体: {request.get_json(silent=True)}")
-    
+            logger.debug(f"JSON ボディ: {request.get_json(silent=True)}")
+
     @app.after_request
     def log_response(response):
         logger = get_logger('mirofish.request')
-        logger.debug(f"响应: {response.status_code}")
+        logger.debug(f"レスポンス: {response.status_code}")
         return response
     
     # 注册蓝图
@@ -74,7 +74,7 @@ def create_app(config_class=Config):
         return {'status': 'ok', 'service': 'MiroFish Backend'}
     
     if should_log_startup:
-        logger.info("MiroFish Backend 启动完成")
+        logger.info("MiroFish Backend の起動が完了しました")
     
     return app
 

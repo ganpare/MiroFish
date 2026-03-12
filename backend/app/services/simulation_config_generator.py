@@ -19,6 +19,7 @@ from datetime import datetime
 from openai import OpenAI
 
 from ..config import Config
+from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 from .zep_entity_reader import EntityNode, ZepEntityReader
 
@@ -304,6 +305,12 @@ class SimulationConfigGenerator:
         report_progress(2, "生成事件配置和热点话题...")
         event_config_result = self._generate_event_config(context, simulation_requirement, entities)
         event_config = self._parse_event_config(event_config_result)
+        event_config = self._ensure_event_config_seeded(
+            event_config=event_config,
+            entities=entities,
+            ontology=ontology,
+            simulation_requirement=simulation_requirement,
+        )
         reasoning_parts.append(f"事件配置: {event_config_result.get('reasoning', '成功')}")
         
         # ========== 步骤3-N: 分批生成Agent配置 ==========
@@ -453,13 +460,15 @@ class SimulationConfigGenerator:
         for attempt in range(max_attempts):
             try:
                 response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
+                    **LLMClient.build_chat_completion_kwargs(
+                        model=self.model_name,
+                        messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.7 - (attempt * 0.1)  # 每次重试降低温度
+                        ],
+                        response_format={"type": "json_object"},
+                        temperature=0.7 - (attempt * 0.1),  # 每次重试降低温度
+                    )
                     # 不设置max_tokens，让LLM自由发挥
                 )
                 
@@ -734,6 +743,137 @@ class SimulationConfigGenerator:
             hot_topics=result.get("hot_topics", []),
             narrative_direction=result.get("narrative_direction", "")
         )
+
+    @staticmethod
+    def _dedupe_keep_order(items: List[str]) -> List[str]:
+        seen = set()
+        result = []
+        for item in items:
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            result.append(item)
+        return result
+
+    def _entity_names_by_type(self, entities: List[EntityNode], entity_type: str, limit: int = 5) -> List[str]:
+        names = []
+        for entity in entities:
+            if (entity.get_entity_type() or "") != entity_type:
+                continue
+            names.append(entity.name)
+            if len(names) >= limit:
+                break
+        return names
+
+    def _build_fallback_event_config(
+        self,
+        entities: List[EntityNode],
+        ontology: Optional[Dict[str, Any]],
+        simulation_requirement: str,
+    ) -> EventConfig:
+        genre = (ontology or {}).get("genre") or "public_opinion"
+        agentizable_types = (ontology or {}).get("agentizable_types") or []
+
+        concepts = self._entity_names_by_type(entities, "Concept")
+        creators = self._entity_names_by_type(entities, "Creator")
+        works = self._entity_names_by_type(entities, "Work")
+        symbols = self._entity_names_by_type(entities, "Symbol")
+        traditions = self._entity_names_by_type(entities, "Tradition")
+        problems = self._entity_names_by_type(entities, "Problem")
+
+        hot_topics = self._dedupe_keep_order(
+            concepts[:3] + works[:2] + creators[:2] + symbols[:2] + problems[:2] + traditions[:2]
+        )[:5]
+
+        def pick_poster_type(preferred: List[str]) -> str:
+            lowered = {item.lower(): item for item in agentizable_types}
+            for item in preferred:
+                if item.lower() in lowered:
+                    return lowered[item.lower()]
+            return agentizable_types[0] if agentizable_types else "Concept"
+
+        if genre == "philosophy":
+            narrative = (
+                "主要概念の定義争いと、作品・批評家・伝統のあいだの解釈衝突が拡大し、"
+                "どの『古層』が批評として有効で、どれが政治的現実を覆い隠すのかが争点になる。"
+            )
+            initial_posts = [
+                {
+                    "content": (
+                        f"『{works[0] if works else '作品'}』における"
+                        f"『{concepts[0] if concepts else '主要概念'}』は批評性を強めるのか、"
+                        "それとも現実の歴史や政治を見えなくするのか。"
+                    ),
+                    "poster_type": pick_poster_type(["Creator", "Concept", "Tradition"]),
+                },
+                {
+                    "content": (
+                        f"{'・'.join(hot_topics[:3]) if hot_topics else simulation_requirement[:80]}"
+                        " をめぐって、概念の再定義と立場の分岐を整理したい。"
+                    ),
+                    "poster_type": pick_poster_type(["Concept", "Tradition", "Creator"]),
+                },
+            ]
+        elif genre == "history":
+            narrative = "制度・主体・事件の因果連鎖が可視化され、どの転換点が後続の展開を決めるかが争点になる。"
+            initial_posts = [
+                {
+                    "content": f"{'・'.join(hot_topics[:3]) if hot_topics else '主要事件'}の連鎖から、次の制度変化をどう読むべきか。",
+                    "poster_type": pick_poster_type(["Institution", "Person", "Faction", "State"]),
+                }
+            ]
+        elif genre == "novel":
+            narrative = "人物の欲望と秘密が衝突し、関係の変化が次の事件を引き起こす。"
+            initial_posts = [
+                {
+                    "content": f"{'・'.join(hot_topics[:3]) if hot_topics else '主要人物'}の関係が次にどう崩れるのかを考えたい。",
+                    "poster_type": pick_poster_type(["Character", "Faction"]),
+                }
+            ]
+        else:
+            narrative = "主要主体の反応が段階的に増幅し、話題のフレーミングと対立軸が拡散していく。"
+            initial_posts = [
+                {
+                    "content": f"{'・'.join(hot_topics[:3]) if hot_topics else simulation_requirement[:80]}について、最初の反応を観測したい。",
+                    "poster_type": pick_poster_type(["MediaOutlet", "Journalist", "Person", "Organization"]),
+                }
+            ]
+
+        return EventConfig(
+            initial_posts=initial_posts,
+            scheduled_events=[],
+            hot_topics=hot_topics,
+            narrative_direction=narrative,
+        )
+
+    def _ensure_event_config_seeded(
+        self,
+        event_config: EventConfig,
+        entities: List[EntityNode],
+        ontology: Optional[Dict[str, Any]],
+        simulation_requirement: str,
+    ) -> EventConfig:
+        needs_seed = (
+            not event_config.initial_posts
+            or not event_config.hot_topics
+            or not (event_config.narrative_direction or "").strip()
+        )
+        if not needs_seed:
+            return event_config
+
+        fallback = self._build_fallback_event_config(
+            entities=entities,
+            ontology=ontology,
+            simulation_requirement=simulation_requirement,
+        )
+
+        if not event_config.initial_posts:
+            event_config.initial_posts = fallback.initial_posts
+        if not event_config.hot_topics:
+            event_config.hot_topics = fallback.hot_topics
+        if not (event_config.narrative_direction or "").strip():
+            event_config.narrative_direction = fallback.narrative_direction
+        return event_config
     
     def _assign_initial_post_agents(
         self,

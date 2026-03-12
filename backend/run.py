@@ -1,5 +1,5 @@
 """
-MiroFish Backend 启动入口
+MiroFish Backend entrypoint.
 """
 
 import os
@@ -23,14 +23,14 @@ from app.config import Config
 
 
 def main():
-    """主函数"""
+    """Main entrypoint."""
     # 验证配置
     errors = Config.validate()
     if errors:
-        print("配置错误:")
+        print("設定エラー:")
         for err in errors:
             print(f"  - {err}")
-        print("\n请检查 .env 文件中的配置")
+        print("\n.env の設定を確認してください。")
         sys.exit(1)
     
     # 创建应用

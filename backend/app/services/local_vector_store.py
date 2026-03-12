@@ -28,6 +28,7 @@ class QdrantChunkStore:
             url=Config.QDRANT_URL,
             api_key=Config.QDRANT_API_KEY,
             timeout=30.0,
+            check_compatibility=False,
         )
         self._collection = Config.QDRANT_COLLECTION_CHUNKS
         self._llm = llm or LLMClient(
@@ -109,13 +110,24 @@ class QdrantChunkStore:
         if graph_id:
             must.append(qmodels.FieldCondition(key="graph_id", match=qmodels.MatchValue(value=graph_id)))
 
-        results = self._client.search(
-            collection_name=self._collection,
-            query_vector=query_vector,
-            limit=limit,
-            query_filter=qmodels.Filter(must=must) if must else None,
-            with_payload=True,
-        )
+        query_filter = qmodels.Filter(must=must) if must else None
+        if hasattr(self._client, "search"):
+            results = self._client.search(
+                collection_name=self._collection,
+                query_vector=query_vector,
+                limit=limit,
+                query_filter=query_filter,
+                with_payload=True,
+            )
+        else:
+            response = self._client.query_points(
+                collection_name=self._collection,
+                query=query_vector,
+                limit=limit,
+                query_filter=query_filter,
+                with_payload=True,
+            )
+            results = getattr(response, "points", []) or []
 
         items: List[Dict[str, Any]] = []
         for result in results:

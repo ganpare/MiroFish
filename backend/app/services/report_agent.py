@@ -569,6 +569,12 @@ PLAN_SYSTEM_PROMPT = """\
 - ❌ 不是对现实世界现状的分析
 - ❌ 不是泛泛而谈的舆情综述
 
+【语言要求】
+- 报告标题、摘要、章节标题必须与 simulation_requirement 的主要语言保持一致
+- 如果 simulation_requirement 或原始材料主要是日文，必须全部使用自然的日文
+- 如果 simulation_requirement 或原始材料主要是中文，必须全部使用自然的中文
+- 不要混用中日文标题
+
 【章节数量限制】
 - 最少2个章节，最多5个章节
 - 不需要子章节，每个章节直接撰写完整内容
@@ -656,6 +662,8 @@ SECTION_SYSTEM_PROMPT_TEMPLATE = """\
 3. 【语言一致性 - 引用内容必须翻译为报告语言】
    - 工具返回的内容可能包含英文或中英文混杂的表述
    - 如果模拟需求和材料原文是中文的，报告必须全部使用中文撰写
+   - 如果模拟需求和材料原文是日文的，报告必须全部使用日文撰写
+   - 当你引用工具返回的英文或英日混杂内容时，必须将其翻译为自然流畅的日文后再写入报告
    - 当你引用工具返回的英文或中英混杂内容时，必须将其翻译为流畅的中文后再写入报告
    - 翻译时保持原意不变，确保表述自然通顺
    - 这一规则同时适用于正文和引用块（> 格式）中的内容
@@ -957,6 +965,233 @@ class ReportAgent:
                 }
             }
         }
+
+    def _detect_report_language(self) -> str:
+        """Infer the preferred report language from the simulation requirement."""
+        text = (self.simulation_requirement or "").strip()
+        if any('\u3040' <= ch <= '\u30ff' for ch in text):
+            return "ja"
+        if any('\u4e00' <= ch <= '\u9fff' for ch in text):
+            return "zh"
+        return "en"
+
+    def _report_language_instruction(self) -> str:
+        language = self._detect_report_language()
+        if language == "ja":
+            return "Write the section body entirely in natural Japanese."
+        if language == "zh":
+            return "Write the section body entirely in natural Chinese."
+        return "Write the section body entirely in natural English."
+
+    def _localize_tool_result_text(self, text: str) -> str:
+        """Normalize tool output headings to the report language."""
+        language = self._detect_report_language()
+        if language != "ja":
+            return text
+
+        normalized = text or ""
+        replacements = [
+            ("搜索查询:", "検索クエリ:"),
+            ("找到 ", "関連情報 "),
+            (" 条相关信息", " 件"),
+            ("## 未来预测深度分析", "## 将来予測の深掘り"),
+            ("分析问题:", "分析対象:"),
+            ("预测场景:", "予測シナリオ:"),
+            ("### 预测数据统计", "### 予測データ統計"),
+            ("相关预测事实", "関連予測事実"),
+            ("涉及实体", "関連エンティティ"),
+            ("### 分析的子问题", "### 分析サブクエリ"),
+            ("### 【关键事实】(请在报告中引用这些原文)", "### 【重要事実】（引用候補）"),
+            ("### 【核心实体】", "### 【主要エンティティ】"),
+            ("摘要:", "概要:"),
+            ("相关事实:", "関連事実:"),
+            ("### 【关系链】", "### 【関係連鎖】"),
+            ("## 广度搜索结果（未来全景视图）", "## 全景検索結果（将来の俯瞰）"),
+            ("查询:", "検索:"),
+            ("### 统计信息", "### 統計"),
+            ("总节点数", "総ノード数"),
+            ("总边数", "総エッジ数"),
+            ("当前有效事实", "現在有効な事実"),
+            ("历史/过期事实", "履歴/期限切れの事実"),
+            ("### 【涉及实体】", "### 【関連エンティティ】"),
+            ("## 深度采访报告", "## 深掘りインタビュー報告"),
+            ("**采访主题:**", "**取材テーマ:**"),
+            ("### 采访对象选择理由", "### 対象選定理由"),
+            ("（自动选择）", "（自動選定）"),
+            ("### 采访实录", "### インタビュー記録"),
+            ("_简介:", "_概要:"),
+            ("**Q:**", "**質問:**"),
+            ("**A:**", "**回答:**"),
+            ("**关键引言:**", "**重要引用:**"),
+            ("### 采访摘要与核心观点", "### インタビュー要約と主要論点"),
+            ("（无摘要）", "（要約なし）"),
+        ]
+        for source, target in replacements:
+            normalized = normalized.replace(source, target)
+
+        normalized = re.sub(
+            r"\*\*采访人数:\*\*\s*(\d+)\s*/\s*(\d+)\s*位模拟Agent",
+            r"**取材人数:** \1 / \2 名のシミュレーションAgent",
+            normalized,
+        )
+        normalized = re.sub(
+            r"已采访\s*(\d+)\s*位Agent（本地模式）",
+            r"ローカル環境で \1 名の Agent に取材しました",
+            normalized,
+        )
+        return normalized
+
+    @staticmethod
+    def _truncate_observation(text: str, limit: int = 2200) -> str:
+        """Keep tool observations compact enough for fallback synthesis."""
+        cleaned = (text or "").strip()
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[:limit].rstrip() + "\n...[truncated]"
+
+    def _matches_report_language(self, text: str) -> bool:
+        """Check whether a text line roughly matches the report language."""
+        language = self._detect_report_language()
+        if language == "ja":
+            return any('\u3040' <= ch <= '\u30ff' for ch in text) or any(ch in "。、「」『』・" for ch in text)
+        if language == "zh":
+            return any('\u4e00' <= ch <= '\u9fff' for ch in text)
+        return bool(re.search(r'[A-Za-z]', text))
+
+    def _build_heuristic_section_body(self, tool_observations: List[Dict[str, str]]) -> str:
+        """Build a minimal section body directly from collected observations."""
+        candidate_lines: List[str] = []
+        fallback_lines: List[str] = []
+
+        for item in tool_observations:
+            for raw_line in (item.get("result") or "").splitlines():
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if line.startswith(("##", "###", "[", "{", "Q:", "A:", "===")):
+                    continue
+                if any(token in line for token in [
+                    "分析问题",
+                    "预测场景",
+                    "预测数据统计",
+                    "核心实体",
+                    "关系链",
+                    "采访摘要",
+                    "工具",
+                    "返回结果",
+                ]):
+                    continue
+
+                cleaned = re.sub(r'^[\-\*\d\.\)\s]+', '', line).strip().strip('"')
+                if cleaned.startswith(("検索クエリ:", "検索:", "查询:", "Query:", "query:")):
+                    continue
+                if len(cleaned) < 20 or len(cleaned) > 220:
+                    continue
+                if cleaned in fallback_lines:
+                    continue
+
+                fallback_lines.append(cleaned)
+                if self._matches_report_language(cleaned):
+                    candidate_lines.append(cleaned)
+
+        selected = candidate_lines[:6] if candidate_lines else fallback_lines[:6]
+        if not selected:
+            return self._fallback_section_body()
+
+        language = self._detect_report_language()
+        if language == "ja":
+            intro = "取得済みの観測を整理すると、この節で押さえるべき要点は次の通りである。"
+            outro = "以上は既存観測の再整理であり、追加インタビューや再生成で具体性を補強できる。"
+        elif language == "zh":
+            intro = "根据已经取得的观测结果，本节至少可以稳定整理出以下要点。"
+            outro = "以上内容来自既有观测的再整理，后续可通过追加采访或再生成补强细节。"
+        else:
+            intro = "The collected observations already support the following core points for this section."
+            outro = "This digest is assembled directly from captured observations and can be refined with another regeneration pass."
+
+        bullets = "\n".join(f"- {line}" for line in selected)
+        return f"{intro}\n\n{bullets}\n\n{outro}"
+
+    def _fallback_section_body(self) -> str:
+        """Return a localized fallback message when section synthesis still fails."""
+        language = self._detect_report_language()
+        if language == "ja":
+            return "収集した観測結果は得られましたが、この節の本文合成に失敗しました。観測ログとインタビュー結果をもとに再生成してください。"
+        if language == "zh":
+            return "已收集到观测结果，但本章节正文合成失败。请基于观测日志与采访结果重新生成。"
+        return "Observations were collected, but section synthesis failed. Please regenerate from the captured logs and interview results."
+
+    def _synthesize_section_from_tools(
+        self,
+        *,
+        section: ReportSection,
+        tool_observations: List[Dict[str, str]],
+        previous_sections: List[str]
+    ) -> str:
+        """
+        Synthesize a section body from collected tool observations when the ReACT
+        loop returns an empty answer or only a heading.
+        """
+        if not tool_observations:
+            return self._fallback_section_body()
+
+        observation_blocks = []
+        for item in tool_observations[-3:]:
+            limit = 3200 if item.get("tool_name") == "interview_agents" else 1800
+            observation_blocks.append(
+                f"[{item.get('tool_name', 'tool')}]\n"
+                f"{self._truncate_observation(item.get('result', ''), limit)}"
+            )
+
+        previous_parts = []
+        for sec in previous_sections[-2:]:
+            previous_parts.append(self._truncate_observation(sec, 1200))
+        previous_content = "\n\n---\n\n".join(previous_parts) if previous_parts else "（前節なし）"
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are rewriting one report section from collected simulation observations only. "
+                    f"{self._report_language_instruction()} "
+                    "Do not call tools. Do not include Markdown headings. "
+                    "Use direct prose, short paragraphs, flat bullets if useful, and translated quotations when useful. "
+                    "Avoid repeating prior sections."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Section title: {section.title}\n"
+                    f"Simulation requirement: {self.simulation_requirement}\n\n"
+                    f"Already covered sections:\n{previous_content}\n\n"
+                    "Collected observations:\n"
+                    f"{chr(10).join(observation_blocks)}\n\n"
+                    "Write only the section body."
+                ),
+            },
+        ]
+
+        try:
+            response = self.llm.chat(
+                messages=messages,
+                temperature=0.2,
+                max_tokens=2500,
+            )
+        except Exception as exc:
+            logger.warning(f"章节 {section.title} 的后备合成失败: {exc}")
+            return self._build_heuristic_section_body(tool_observations)
+
+        content = (response or "").strip()
+        if "Final Answer:" in content:
+            content = content.split("Final Answer:")[-1].strip()
+
+        content = re.sub(r'^\s*#{1,6}\s+.+$', '', content, flags=re.MULTILINE).strip()
+        if content:
+            logger.info(f"章节 {section.title} 使用后备合成生成正文")
+            return content
+
+        return self._build_heuristic_section_body(tool_observations)
     
     def _execute_tool(self, tool_name: str, parameters: Dict[str, Any], report_context: str = "") -> str:
         """
@@ -982,7 +1217,7 @@ class ReportAgent:
                     simulation_requirement=self.simulation_requirement,
                     report_context=ctx
                 )
-                return result.to_text()
+                return self._localize_tool_result_text(result.to_text())
             
             elif tool_name == "panorama_search":
                 # 广度搜索 - 获取全貌
@@ -995,7 +1230,7 @@ class ReportAgent:
                     query=query,
                     include_expired=include_expired
                 )
-                return result.to_text()
+                return self._localize_tool_result_text(result.to_text())
             
             elif tool_name == "quick_search":
                 # 简单搜索 - 快速检索
@@ -1008,7 +1243,7 @@ class ReportAgent:
                     query=query,
                     limit=limit
                 )
-                return result.to_text()
+                return self._localize_tool_result_text(result.to_text())
             
             elif tool_name == "interview_agents":
                 # 深度采访 - 调用真实的OASIS采访API获取模拟Agent的回答（双平台）
@@ -1023,7 +1258,7 @@ class ReportAgent:
                     simulation_requirement=self.simulation_requirement,
                     max_agents=max_agents
                 )
-                return result.to_text()
+                return self._localize_tool_result_text(result.to_text())
             
             # ========== 向后兼容的旧工具（内部重定向到新工具） ==========
             
@@ -1199,7 +1434,7 @@ class ReportAgent:
                 ))
             
             outline = ReportOutline(
-                title=response.get("title", "模拟分析报告"),
+                title=response.get("title", "シミュレーション分析レポート"),
                 summary=response.get("summary", ""),
                 sections=sections
             )
@@ -1214,12 +1449,12 @@ class ReportAgent:
             logger.error(f"大纲规划失败: {str(e)}")
             # 返回默认大纲（3个章节，作为fallback）
             return ReportOutline(
-                title="未来预测报告",
-                summary="基于模拟预测的未来趋势与风险分析",
+                title="未来予測レポート",
+                summary="シミュレーションに基づく今後の展開とリスクの分析",
                 sections=[
-                    ReportSection(title="预测场景与核心发现"),
-                    ReportSection(title="人群行为预测分析"),
-                    ReportSection(title="趋势展望与风险提示")
+                    ReportSection(title="予測シナリオと主要な発見"),
+                    ReportSection(title="主体行動の予測分析"),
+                    ReportSection(title="今後の展望とリスク")
                 ]
             )
     
@@ -1293,6 +1528,7 @@ class ReportAgent:
         conflict_retries = 0  # 工具调用与Final Answer同时出现的连续冲突次数
         used_tools = set()  # 记录已调用过的工具名
         all_tools = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
+        tool_observations: List[Dict[str, str]] = []
 
         # 报告上下文，用于InsightForge的子问题生成
         report_context = f"章节标题: {section.title}\n模拟需求: {self.simulation_requirement}"
@@ -1396,6 +1632,13 @@ class ReportAgent:
 
                 # 正常结束
                 final_answer = response.split("Final Answer:")[-1].strip()
+                if not final_answer:
+                    logger.warning(f"章节 {section.title} 收到空的 Final Answer，改用后备合成")
+                    final_answer = self._synthesize_section_from_tools(
+                        section=section,
+                        tool_observations=tool_observations,
+                        previous_sections=previous_sections,
+                    )
                 logger.info(f"章节 {section.title} 生成完成（工具调用: {tool_calls_count}次）")
 
                 if self.report_logger:
@@ -1452,6 +1695,10 @@ class ReportAgent:
 
                 tool_calls_count += 1
                 used_tools.add(call['name'])
+                tool_observations.append({
+                    "tool_name": call["name"],
+                    "result": result,
+                })
 
                 # 构建未使用工具提示
                 unused_tools = all_tools - used_tools
@@ -1495,6 +1742,13 @@ class ReportAgent:
             # 直接将这段内容作为最终答案，不再空转
             logger.info(f"章节 {section.title} 未检测到 'Final Answer:' 前缀，直接采纳LLM输出作为最终内容（工具调用: {tool_calls_count}次）")
             final_answer = response.strip()
+            if not final_answer:
+                logger.warning(f"章节 {section.title} 收到空响应，改用后备合成")
+                final_answer = self._synthesize_section_from_tools(
+                    section=section,
+                    tool_observations=tool_observations,
+                    previous_sections=previous_sections,
+                )
 
             if self.report_logger:
                 self.report_logger.log_section_content(
@@ -1517,12 +1771,19 @@ class ReportAgent:
 
         # 检查强制收尾时 LLM 返回是否为 None
         if response is None:
-            logger.error(f"章节 {section.title} 强制收尾时 LLM 返回 None，使用默认错误提示")
-            final_answer = f"（本章节生成失败：LLM 返回空响应，请稍后重试）"
+            logger.error(f"章节 {section.title} 强制收尾时 LLM 返回 None，改用后备合成")
+            final_answer = ""
         elif "Final Answer:" in response:
             final_answer = response.split("Final Answer:")[-1].strip()
         else:
-            final_answer = response
+            final_answer = response.strip()
+
+        if not final_answer:
+            final_answer = self._synthesize_section_from_tools(
+                section=section,
+                tool_observations=tool_observations,
+                previous_sections=previous_sections,
+            )
         
         # 记录章节内容生成完成日志
         if self.report_logger:

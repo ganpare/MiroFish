@@ -35,6 +35,44 @@ class LocalToolsService:
                 self.vector_store = None
 
     @staticmethod
+    def _detect_output_language(*texts: str) -> str:
+        combined = "\n".join([text for text in texts if text])
+        if any('\u3040' <= ch <= '\u30ff' for ch in combined):
+            return "ja"
+        if any('\u4e00' <= ch <= '\u9fff' for ch in combined):
+            return "zh"
+        return "en"
+
+    @classmethod
+    def _build_interview_prompt(
+        cls,
+        *,
+        simulation_requirement: str,
+        interview_requirement: str,
+        language: str,
+    ) -> str:
+        if language == "ja":
+            return (
+                "あなたの立場と役割から、次の取材テーマについて具体的に答えてください。\n\n"
+                f"【シミュレーション背景】{simulation_requirement}\n"
+                f"【取材テーマ】{interview_requirement}\n"
+                "要件：見出しは使わない。箇条書きは可。可能ならシミュレーション内で見聞きしたことや自分の経験に触れてください。"
+            )
+        if language == "zh":
+            return (
+                "请以你的身份与立场，回答以下采访主题，并给出清晰、具体的观点与理由。\n\n"
+                f"【模拟背景】{simulation_requirement}\n"
+                f"【采访主题】{interview_requirement}\n"
+                "要求：不要使用标题；可以分点；尽量引用你在模拟中的观察/经历（如有）。"
+            )
+        return (
+            "Answer the interview topic from your own role and standpoint with concrete reasoning.\n\n"
+            f"[Simulation context] {simulation_requirement}\n"
+            f"[Interview topic] {interview_requirement}\n"
+            "Requirements: no headings; bullet points are allowed; mention observations or experiences from the simulation when possible."
+        )
+
+    @staticmethod
     def _load_agent_profiles(simulation_id: str) -> List[Dict[str, Any]]:
         import csv
         import json
@@ -88,16 +126,27 @@ class LocalToolsService:
             interview_topic=interview_requirement,
             interview_questions=custom_questions or [],
         )
+        output_language = self._detect_output_language(simulation_requirement, interview_requirement)
 
         profiles = self._load_agent_profiles(simulation_id)
         if not profiles:
-            result.summary = "未找到可采访的 Agent 人设文件（请先完成 Step2 环境准备）"
+            if output_language == "ja":
+                result.summary = "取材対象の Agent プロフィールが見つかりません（先に Step2 を完了してください）"
+            elif output_language == "zh":
+                result.summary = "未找到可采访的 Agent 人设文件（请先完成 Step2 环境准备）"
+            else:
+                result.summary = "No interviewable agent profiles were found. Complete Step2 first."
             return result
 
         result.total_agents = len(profiles)
         count = max(0, min(int(max_agents or 0), len(profiles)))
         if count == 0:
-            result.summary = "max_agents=0，未执行采访"
+            if output_language == "ja":
+                result.summary = "max_agents=0 のためインタビューを実行しませんでした"
+            elif output_language == "zh":
+                result.summary = "max_agents=0，未执行采访"
+            else:
+                result.summary = "Interview skipped because max_agents=0."
             return result
 
         if count >= len(profiles):
@@ -109,17 +158,21 @@ class LocalToolsService:
         if custom_questions:
             combined_prompt = "\n".join([item.strip() for item in custom_questions if item and item.strip()][:5])
         else:
-            combined_prompt = (
-                "请以你的身份与立场，回答以下采访主题，并给出清晰、具体的观点与理由。\n\n"
-                f"【模拟背景】{simulation_requirement}\n"
-                f"【采访主题】{interview_requirement}\n"
-                "要求：不要使用标题；可以分点；尽量引用你在模拟中的观察/经历（如有）。"
+            combined_prompt = self._build_interview_prompt(
+                simulation_requirement=simulation_requirement,
+                interview_requirement=interview_requirement,
+                language=output_language,
             )
             result.interview_questions = [interview_requirement]
 
         interviews_request = [{"agent_id": idx, "prompt": combined_prompt} for idx in selected_indices]
         if not SimulationRunner.check_env_alive(simulation_id):
-            result.summary = "采访失败：模拟环境未运行或已关闭（请保持模拟环境处于运行状态）"
+            if output_language == "ja":
+                result.summary = "インタビュー失敗: シミュレーション環境が停止しています"
+            elif output_language == "zh":
+                result.summary = "采访失败：模拟环境未运行或已关闭（请保持模拟环境处于运行状态）"
+            else:
+                result.summary = "Interview failed because the simulation environment is not running."
             return result
 
         api_result = SimulationRunner.interview_agents_batch(
@@ -129,7 +182,13 @@ class LocalToolsService:
             timeout=180.0,
         )
         if not api_result.get("success", False):
-            result.summary = f"采访API调用失败：{api_result.get('error', '未知错误')}"
+            error_text = api_result.get('error', '未知错误')
+            if output_language == "ja":
+                result.summary = f"インタビュー API 呼び出しに失敗しました: {error_text}"
+            elif output_language == "zh":
+                result.summary = f"采访API调用失败：{error_text}"
+            else:
+                result.summary = f"Interview API call failed: {error_text}"
             return result
 
         api_data = api_result.get("result", {})
@@ -147,10 +206,19 @@ class LocalToolsService:
 
             parts = []
             if twitter_response:
-                parts.append(f"【Twitter平台回答】\n{twitter_response}")
+                label = "【Twitterでの回答】" if output_language == "ja" else "【Twitter平台回答】" if output_language == "zh" else "[Twitter response]"
+                parts.append(f"{label}\n{twitter_response}")
             if reddit_response:
-                parts.append(f"【Reddit平台回答】\n{reddit_response}")
-            response_text = "\n\n".join(parts) if parts else "[无回复]"
+                label = "【Redditでの回答】" if output_language == "ja" else "【Reddit平台回答】" if output_language == "zh" else "[Reddit response]"
+                parts.append(f"{label}\n{reddit_response}")
+            if parts:
+                response_text = "\n\n".join(parts)
+            elif output_language == "ja":
+                response_text = "[応答なし]"
+            elif output_language == "zh":
+                response_text = "[无回复]"
+            else:
+                response_text = "[No response]"
 
             result.interviews.append(
                 AgentInterview(
@@ -164,7 +232,20 @@ class LocalToolsService:
             )
 
         result.interviewed_count = len(result.interviews)
-        result.summary = f"已采访 {result.interviewed_count} 位Agent（本地模式）" if result.interviews else "未获得有效采访回复"
+        if result.interviews:
+            if output_language == "ja":
+                result.summary = f"ローカル環境で {result.interviewed_count} 名の Agent に取材しました"
+            elif output_language == "zh":
+                result.summary = f"已采访 {result.interviewed_count} 位Agent（本地模式）"
+            else:
+                result.summary = f"Interviewed {result.interviewed_count} agents in local mode."
+        else:
+            if output_language == "ja":
+                result.summary = "有効なインタビュー応答を取得できませんでした"
+            elif output_language == "zh":
+                result.summary = "未获得有效采访回复"
+            else:
+                result.summary = "No valid interview responses were collected."
         return result
 
     def quick_search(self, graph_id: str, query: str, limit: int = 10) -> SearchResult:
